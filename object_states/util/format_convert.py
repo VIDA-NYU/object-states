@@ -3,9 +3,6 @@ import numpy as np
 import torch
 import fiftyone as fo
 import supervision as sv
-from xmem import XMem
-from .util.video import XMemSink
-
 
 
 
@@ -37,7 +34,7 @@ def fo_to_sv(fo_detections, shape):
 
 
 
-def detectron_to_fo(outputs, shape):
+def detectron_to_fo(outputs, labels, shape):
     # format is documented at https://detectron2.readthedocs.io/tutorials/models.html#model-output-format
     detections = []
     instances = outputs["instances"].to("cpu")
@@ -50,7 +47,7 @@ def detectron_to_fo(outputs, shape):
         x1, y1, x2, y2 = xyxy
         fo_mask = mask.numpy()[int(y1):int(y2), int(x1):int(x2)]
         detection = fo.Detection(
-            label=detic.labels[cls_id], 
+            label=labels[cls_id], 
             confidence=float(score), 
             bounding_box=xyxy2xywhn(xyxy, shape), 
             mask=fo_mask)

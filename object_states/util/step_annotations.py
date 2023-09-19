@@ -1,3 +1,9 @@
+import os
+import tqdm
+import pathtrees as pt
+import pandas as pd
+import fiftyone as fo
+
 
 
 pathn = pt.Path('{key}_{skill}_{medium}_{part_id:d}_video-{vid_id:04d}_{cam}.mp4')
@@ -17,7 +23,7 @@ def fname_to_video_id(fname):
 
 def add_step_annotations(view, steps_csv):
     steps_df = pd.read_csv(steps_csv)
-    steps_df.head()
+
     for d in tqdm.tqdm(view):
         video_id = fname_to_video_id(d.filepath)
         if not video_id: 
@@ -33,3 +39,4 @@ def add_step_annotations(view, steps_csv):
         )
         d.save()
     return view
+

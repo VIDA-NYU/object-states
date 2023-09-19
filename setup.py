@@ -7,5 +7,14 @@ setuptools.setup(
     long_description=open('README.md').read().strip(),
     long_description_content_type='text/markdown',
     packages=setuptools.find_packages(),
-    install_requires=['torch', 'opencv-python', 'fiftyone'], # TODO
+    install_requires=[
+        'torch', 
+        'numpy',
+        'opencv-python', 
+        'fiftyone',
+        'supervision',
+        'tqdm',
+        'pathtrees',
+        'pandas',
+    ],
     extras_require={})

@@ -1,3 +1,8 @@
+DATASET:
+  ROOT: /scratch/work/ptg/object_states/pinwheels
+  VIDEO_PATTERN: /Milly
+  STEPS_CSV: ./steps.csv
+
 DATA:
   LABELS: 
     - cat
@@ -23,5 +28,4 @@ XMEM:
   }
 
 
-EVAL:
-  
+EVAL: {}

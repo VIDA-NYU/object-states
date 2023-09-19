@@ -1,43 +1,77 @@
-from . import _patch
+from collections import defaultdict, Counter
 
+import os
 import cv2
+import tqdm
 import numpy as np
 import torch
 import fiftyone as fo
 import supervision as sv
-from xmem import XMem
+from torchvision.ops import masks_to_boxes
+
+from .config import get_cfg
 from .util.video import XMemSink, iter_video
 from .util.format_convert import *
 
+from xmem import XMem
+from detic import Detic
+
+device = 'cuda'
 
 import ipdb
 @ipdb.iex
-def main(dataset_dir, field='detections', detect=False, detect_every=6, track_labels=None):
+def main(config_fname, field='detections', detect=False, detect_every=6, video_pattern=None):
+    cfg = get_cfg(config_fname)
+    
+    dataset_dir = cfg.DATASET.ROOT
+    video_pattern = cfg.DATASET.VIDEO_PATTERN
     
     # ------------------------------- Load dataset ------------------------------- #
 
-    dataset = fo.Dataset.from_dir(
-        dataset_dir=data_dir,
-        dataset_type=fo.types.FiftyOneVideoLabelsDataset,
-    )
+    if os.path.exists(dataset_dir):
+        dataset = fo.Dataset.from_videos_patt(video_pattern, name=dataset_dir.split(os.sep)[-1], overwrite=True)
+    else:
+        dataset = fo.Dataset.from_dir(
+            dataset_dir=dataset_dir,
+            dataset_type=fo.types.FiftyOneVideoLabelsDataset,
+        )
 
     view = dataset.view()
     view.compute_metadata(overwrite=True)
-
-    # ---------------------------- Do object tracking ---------------------------- #
 
     if detect:
         assert field != 'ground_truth', 'umm..'
     track_field = f'{field}_tracker'
 
-    xmem = XMem({})
+    # --------------------------- Load object detector --------------------------- #
+
+    UNTRACKED_VOCAB = cfg.DATA.UNTRACKED_VOCAB
+    TRACKED_VOCAB = cfg.DATA.VOCAB
+    VOCAB = TRACKED_VOCAB + UNTRACKED_VOCAB
+    CONFIDENCE = cfg.DETIC.CONFIDENCE
+
+    # object detector
+    detic = Detic(VOCAB, conf_threshold=CONFIDENCE, masks=True)
+    print(detic.labels)
+
+    # ---------------------------- Load object tracker --------------------------- #
+
+    xmem = XMem(cfg.XMEM.CONFIG)
     xmem.track_detections = {}
     xmem.label_counts = defaultdict(lambda: Counter())
+
+    # ----------------------------- Loop over videos ----------------------------- #
 
     for sample in tqdm.tqdm(view):
         xmem.clear_memory(reset_index=True)
         xmem.track_detections.clear()
         xmem.label_counts.clear()
+
+        # ----------------------------- Loop over frames ----------------------------- #
+
+        video_path = sample.filepath
+        video_info = sv.VideoInfo.from_video_path(video_path=video_path)
+        out_path = f'{dataset_dir}/track_render/{os.path.basename(video_path)}.mp4'
 
         with XMemSink(out_path, video_info) as s:
             for i, frame, finfo in iter_video(sample):
@@ -50,7 +84,7 @@ def main(dataset_dir, field='detections', detect=False, detect_every=6, track_la
                 # --------------------------------- tracking --------------------------------- #
 
                 finfo[track_field] = do_xmem(
-                    xmem, frame, finfo[field], track_labels)
+                    xmem, frame, finfo[field], TRACKED_VOCAB)
 
                 # ---------------------------------- drawing --------------------------------- #
 
@@ -62,7 +96,7 @@ def main(dataset_dir, field='detections', detect=False, detect_every=6, track_la
     # ------------------------------ Export dataset ------------------------------ #
 
     view.export(
-        export_dir=data_dir,
+        export_dir=dataset_dir,
         dataset_type=fo.types.FiftyOneVideoLabelsDataset,
         label_field=track_field,
     )
@@ -75,10 +109,10 @@ def main(dataset_dir, field='detections', detect=False, detect_every=6, track_la
 
 def do_detect(model, frame):
     outputs = model(frame)
-    return detectron_to_fo(outputs, frame.shape)
+    return detectron_to_fo(outputs, model.labels, frame.shape)
 
 
-def do_xmem(xmem, frame, fo_detections, track_labels=None, width=280):
+def do_xmem(xmem, frame, gt, track_labels=None, width=280):
     # ------------------------------- Resize frame ------------------------------- #
 
     ho, wo = frame.shape[:2]
@@ -109,7 +143,7 @@ def do_xmem(xmem, frame, fo_detections, track_labels=None, width=280):
 
     if gt_mask is not None:
         for tid, det in zip(input_track_ids, gt):
-            track_detections[tid] = det
+            xmem.track_detections[tid] = det
         for tid, label in zip(input_track_ids, gt_labels):
             xmem.label_counts[tid].update([label])
 
@@ -117,7 +151,7 @@ def do_xmem(xmem, frame, fo_detections, track_labels=None, width=280):
     
     detections = []
     for tid, mask, box in zip(track_ids, pred_mask, boxes):
-        det = track_detections[tid].copy()
+        det = xmem.track_detections[tid].copy()
         detections.append(det)
 
         det.mask = mask2detection(mask).mask

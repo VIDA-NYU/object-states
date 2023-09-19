@@ -86,14 +86,18 @@ class TrackSink:
         if frame is None:
             frame = np.zeros(self.size, dtype='uint8')
         elif bbox is not None:
-            x, y, x2, y2 = map(int, bbox)
-            frame = frame[y - self.padding:y2 + self.padding, x - self.padding:x2 + self.padding]
+            frame = crop_box(frame, bbox, self.padding)
         frame = resize_with_pad(frame, self.size)
         writer.write_frame(frame)
 
     @classmethod
     def path_to_track_pattern(self, path):
         return '{}_track{{}}{}'.format(*os.path.splitext(path))
+
+
+def crop_box(frame, bbox, padding=0):
+    x, y, x2, y2 = map(int, bbox)
+    return frame[y - padding:y2 + padding, x - padding:x2 + padding]
 
 
 def resize_with_pad(image, new_shape):
