@@ -1,0 +1,27 @@
+DATA:
+  LABELS: 
+    - cat
+  UNTRACKED_LABELS:
+   - person
+
+DETIC: 
+  CONFIDENCE: 0.5
+
+XMEM:
+  CONFIG: {
+    'top_k': 15,
+    'mem_every': 30,
+    'deep_update_every': -1,
+    'enable_long_term': True,
+    'enable_long_term_count_usage': True,
+    'num_prototypes': 32,
+    'min_mid_term_frames': 6,
+    'max_mid_term_frames': 12,
+    'max_long_term_elements': 1000,
+    'tentative_frames': 3,
+    'max_age': 60 * 30,
+  }
+
+
+EVAL:
+  

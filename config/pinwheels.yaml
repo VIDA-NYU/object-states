@@ -1,0 +1,10 @@
+DATA:
+  VOCAB: 
+    - tortilla, white flour, circular
+    - knife
+    - plate
+  UNTRACKED_VOCAB:
+   - peanut butter
+   - jelly
+   - jar
+   - person
