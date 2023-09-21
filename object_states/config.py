@@ -5,11 +5,11 @@ from yacs.config import CfgNode as CN
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONFIG_DIR = ROOT_DIR / 'config'
-BASE_CONFIG = CONFIG_DIR / 'base'
+BASE_CONFIG = CONFIG_DIR / 'base.yaml'
 
 
 _C = CN(new_allowed=True)
-cfg.merge_from_file(BASE_CONFIG)
+_C.merge_from_file(BASE_CONFIG)
 # cfg.freeze()
 
 

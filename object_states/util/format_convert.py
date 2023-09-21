@@ -11,7 +11,8 @@ import supervision as sv
 # ---------------------------------------------------------------------------- #
 
 
-def fo_to_sv(fo_detections, shape):
+def fo_to_sv(fo_detections, shape, mask=True): # h, w
+    h, w = shape[:2]
     # get detections list
     fo_detections = getattr(fo_detections, 'detections', None) or []
     ds = [d for d in fo_detections if d.mask is not None]
@@ -19,10 +20,10 @@ def fo_to_sv(fo_detections, shape):
     # convert to sv Detections object
     labels = np.array([d.label for d in ds], dtype=str)
     detections = sv.Detections(
-        xyxy=np.array([xywhn2xyxy(d.bounding_box, shape) for d in ds]),
-        track_ids=np.array([d.index for d in ds]),
+        xyxy=xywhn2xyxy(np.array([d.bounding_box for d in ds]).reshape(-1, 4), (h, w)),
+        tracker_id=np.array([d.index for d in ds]),
         confidence=np.array([d.confidence for d in ds]),
-        mask=np.array([d.to_segmentation(frame_size=shape, target=1).mask for d in ds]),
+        mask=np.array([d.to_segmentation(frame_size=(w, h), target=1).mask for d in ds]) if mask and len(ds) else None,
     )
     return detections, labels
 

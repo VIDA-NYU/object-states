@@ -1,16 +1,32 @@
 DATASET:
-  ROOT: /scratch/work/ptg/object_states/pinwheels
-  VIDEO_PATTERN: /Milly
-  STEPS_CSV: ./steps.csv
+  ROOT: /datasets/Milly_pred
+  VIDEO_PATTERN: /datasets/Milly/data/*_pv.mp4
+  STEPS_CSV: /datasets/Milly_full.csv
+  EMBEDDING_DIR: /datasets/Milly_pred/embeddings/detections_tracker
+
+  N_AUGMENTATIONS: 10
+  EMBED_SKIP: 5
 
 DATA:
-  LABELS: 
+  VOCAB: 
     - cat
-  UNTRACKED_LABELS:
+  UNTRACKED_VOCAB:
    - person
+
+  STEP_STAGES:
+    PRE: 
+      BOUNDS: [0, 0.15]
+    MID: 
+      BOUNDS: [0.3, 0.7]
+    POST: 
+      BOUNDS: [0.85, 1]
+
+
+
 
 DETIC: 
   CONFIDENCE: 0.5
+  DETECT_EVERY: 30
 
 XMEM:
   CONFIG: {
@@ -19,12 +35,13 @@ XMEM:
     'deep_update_every': -1,
     'enable_long_term': True,
     'enable_long_term_count_usage': True,
-    'num_prototypes': 32,
+    'num_prototypes': 64,
     'min_mid_term_frames': 6,
     'max_mid_term_frames': 12,
     'max_long_term_elements': 1000,
-    'tentative_frames': 3,
-    'max_age': 60 * 30,
+    'tentative_frames': 4,
+    'tentative_age': 3,
+    'max_age': 60,  # in steps
   }
 
 

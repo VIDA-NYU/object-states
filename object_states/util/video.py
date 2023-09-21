@@ -1,4 +1,5 @@
 import os
+import tqdm
 import cv2
 import numpy as np
 import supervision as sv
@@ -15,9 +16,8 @@ class DetectionAnnotator:
         self.mask_ann = sv.MaskAnnotator()
 
     def annotate(self, frame, detections, labels=None):
-        if detections is not None:
-            frame = self.mask_ann.annotate(frame, detections)
-            frame = self.box_ann.annotate(frame, detections, labels=labels)
+        frame = self.mask_ann.annotate(frame, detections)
+        frame = self.box_ann.annotate(frame, detections, labels=labels)
         return frame
 
 
@@ -35,37 +35,37 @@ class DetectionSink(sv.VideoSink):
         return super().write_frame(frame)
 
 
-class XMemSink(DetectionSink):
+class XMemSink(sv.VideoSink):
     '''Create both a full video
     '''
     def __init__(self, target_path, video_info):
-        super().__init__(target_path, video_info)
-        self.ann = DetectionAnnotator()
-        self.tracks = TrackSink(TrackSink.path_to_track_pattern(target_path), video_info)
+        super().__init__(f'{target_path}/full.mp4', video_info)
+        # self.ann = DetectionAnnotator()
+        self.tracks = TrackSink(target_path, video_info)
 
     def __enter__(self):
         self.tracks.__enter__()
-        return self.__enter__()
+        return super().__enter__()
 
     def __exit__(self, *a):
         self.tracks.__exit__(*a)
-        return self.__exit__(*a)
+        return super().__exit__(*a)
 
-    def write_frame(self, frame, detections=None, labels=None):
-        self.tracks.write_frame(frame, detections)
-        return super().write_frame(frame)
+    # def write_frame(self, frame, detections=None, labels=None):
+    #     self.tracks.write_frame(frame.copy(), detections)
+    #     frame = self.ann.annotate(frame.copy(), detections, labels)
+    #     return super().write_frame(frame)
 
 
 class TrackSink:
     '''Create videos cropped to each track bounding box.
     '''
-    def __init__(self, out_format, video_info, size=200, padding=0):
-        self.out_format = out_format
-        
-        os.makedirs(os.path.dirname(self.out_format) or '.', exist_ok=True)
+    def __init__(self, out_dir, video_info, size=200, padding=0, min_frames=10):
+        self.out_dir = out_dir
         self.video_info = sv.VideoInfo(width=size, height=size, fps=video_info.fps)
         self.size = (self.video_info.height, self.video_info.width)
         self.padding = padding
+        self.min_frames = min_frames
         self.writers = {}
 
     def __enter__(self):
@@ -74,13 +74,22 @@ class TrackSink:
     def __exit__(self, *a):
         for w in self.writers.values():
             w.__exit__(*a)
+            if w.count < self.min_frames:
+                os.remove(w.target_path)
 
     def write_frame(self, frame, detections):
         for tid, bbox in zip(detections.tracker_id, detections.xyxy):
-            if tid not in self.writers:
-                self.writers[tid] = sv.VideoSink(self.out_format.format(tid), self.video_info)
-                self.writers[tid].__enter__()
-            self._write_frame(self.writers[tid], frame, bbox)
+            self._write_frame(self._get_writer(tid), frame, bbox)
+
+    def _get_writer(self, tid):
+        if tid in self.writers:
+            return self.writers[tid]
+        fname = f'{self.out_dir}/track_{tid}.mp4' #self.out_format.format(tid)
+        os.makedirs(os.path.dirname(fname) or '.', exist_ok=True)
+        self.writers[tid] = sv.VideoSink(fname, self.video_info)
+        self.writers[tid].__enter__()
+        self.writers[tid].count = 0
+        return self.writers[tid]
 
     def _write_frame(self, writer, frame=None, bbox=None):
         if frame is None:
@@ -89,15 +98,15 @@ class TrackSink:
             frame = crop_box(frame, bbox, self.padding)
         frame = resize_with_pad(frame, self.size)
         writer.write_frame(frame)
-
-    @classmethod
-    def path_to_track_pattern(self, path):
-        return '{}_track{{}}{}'.format(*os.path.splitext(path))
+        writer.count += 1
 
 
 def crop_box(frame, bbox, padding=0):
+    H, W = frame.shape[:2]
     x, y, x2, y2 = map(int, bbox)
-    return frame[y - padding:y2 + padding, x - padding:x2 + padding]
+    return frame[
+        max(y - padding, 0):min(y2 + padding, H), 
+        max(x - padding, 0):min(x2 + padding, W)]
 
 
 def resize_with_pad(image, new_shape):
