@@ -2,7 +2,7 @@ DATASET:
   ROOT: /datasets/Milly_pred
   VIDEO_PATTERN: /datasets/Milly/data/*_pv.mp4
   STEPS_CSV: /datasets/Milly_full.csv
-  EMBEDDING_DIR: /datasets/Milly_pred/embeddings/detections_tracker
+  # EMBEDDING_DIR: /datasets/Milly_pred/embeddings/detections_tracker
 
   N_AUGMENTATIONS: 10
   EMBED_SKIP: 5
@@ -14,14 +14,14 @@ DATA:
    - person
 
   STEP_STAGES:
-    PRE: 
-      BOUNDS: [0, 0.15]
-    MID: 
-      BOUNDS: [0.3, 0.7]
-    POST: 
-      BOUNDS: [0.85, 1]
+    pre: [0, 0.15]
+    mid: [0.3, 0.7]
+    post: [0.85, 1]
+    full: [0, 1]
 
-
+EVAL:
+  DETECTION_NAME: detections_tracker
+  EMBEDDING_TYPES: ['clip', 'detic', 'detic_s0', 'detic_s1', 'detic_s2']
 
 
 DETIC: 
@@ -42,6 +42,7 @@ XMEM:
     'tentative_frames': 4,
     'tentative_age': 3,
     'max_age': 60,  # in steps
+    # 'min_iou': 0.3,
   }
 
 

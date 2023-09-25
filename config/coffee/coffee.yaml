@@ -1,0 +1,19 @@
+_BASE_: ../base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_coffee_pred
+  VIDEO_PATTERN: /datasets/ptgrecipes-flat/coffee_*.mp4
+
+DATA:
+  VOCAB: 
+    - cup mug
+    - measuring_cup hand_glass tachometer
+  UNTRACKED_VOCAB:
+    - bowl cup 
+    - kettle black atomizer
+    - scale_(measuring_instrument) cigarette_case electronic calculator iPad
+    - thermometer pocketknife
+    - coffee_grinder thermos_bottle canister cup
+    - person
+
+STEPS:
+  - 

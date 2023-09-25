@@ -1,0 +1,155 @@
+_BASE_: ../base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_pinwheels_pred
+  VIDEO_PATTERN: /datasets/ptgrecipes-flat/pinwheels_*.mp4
+
+DATA:
+  VOCAB: 
+    - tortilla, white flour, circular
+  UNTRACKED_VOCAB:
+    - knife
+    - plate
+    # - peanut butter
+    # - jelly
+    - jar
+    - person
+
+STEPS:
+  - name: 1. Place tortilla on cutting board.
+    objects:
+      - label: tortilla
+        full: plain
+      - label: knife
+        full: clean
+      - label: plate
+        post: empty
+  - name: 2. Use a butter knife to scoop nut butter from the jar. Spread nut butter onto tortilla, leaving 1/2 inch uncovered at the edges.
+    objects:
+      - label: tortilla
+        pre: plain
+        mid: peanut-butter[partial]
+        post: peanut-butter[full]
+      - label: knife
+        pre: clean
+        mid: dirty
+        post: dirty
+      - label: plate
+        full: empty
+  - name: 3. Clean the knife by wiping with a paper towel.
+    objects:
+      - label: knife
+        pre: dirty
+        mid: dirty
+        post: clean
+      - label: tortilla
+        full: peanut-butter[full]
+      - label: plate
+        full: empty
+  - name: 4. Use the knife to scoop jelly from the jar. Spread jelly over the nut butter.
+    objects:
+      - label: knife
+        pre: clean
+        mid: dirty
+        post: dirty
+      - label: tortilla
+        pre: peanut-butter[full]
+        mid: peanut-butter+jelly[partial]
+        post: peanut-butter+jelly[full]
+      - label: plate
+        full: empty
+  - name: 4. Use the knife to scoop jelly from the jar. Spread jelly over the nut butter.
+    objects:
+      - label: knife
+        pre: clean
+        mid: dirty
+        post: dirty
+      - label: tortilla
+        full: peanut-butter+jelly[full]
+      - label: plate
+        full: empty
+  - name: 5. Clean the knife by wiping with a paper towel.
+    objects:
+      - label: knife
+        pre: dirty
+        mid: dirty
+        post: clean
+      - label: tortilla
+        full: peanut-butter+jelly[full]
+      - label: plate
+        full: empty
+  - name: 6. Roll the tortilla from one end to the other into a log shape, about 1.5 inches thick. Roll it tight enough to prevent gaps, but not so tight that the filling leaks.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: peanut-butter+jelly[full]
+        mid: rolling
+        post: rolled
+      - label: plate
+        full: empty
+  - name: 7. Secure the rolled tortilla by inserting 5 toothpicks about 1 inch apart.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: rolled
+        mid: rolled+toothpicks[partial]
+        post: rolled+toothpicks[full]
+      - label: plate
+        full: empty
+  - name: 8. Trim the ends of the tortilla roll with the butter knife, leaving 1/2 inch margin between the last toothpick and the end of the roll. Discard ends.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: rolled+toothpicks[full]
+        mid: rolled+toothpicks[trimmed]
+        post: rolled+toothpicks[trimmed]
+      - label: plate
+        full: empty
+  - name: 9. Slide floss under the tortilla, perpendicular to the length of the roll. Place the floss halfway between two toothpicks.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: rolled+toothpicks[trimmed]
+        post: rolled+toothpicks+floss[flat]
+      - label: plate
+        full: empty
+  - name: 10. Cross the two ends of the floss over the top of the tortilla roll. Holding one end of the floss in each hand, pull the floss ends in opposite directions to slice.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: rolled+toothpicks+floss[flat]
+        post: rolled+toothpicks+floss[crossed]
+      - label: plate
+        full: empty
+  - name: 11. Continue slicing with floss to create 5 pinwheels.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: rolled+toothpicks+floss[crossed]
+        mid: pinwheels[partial]
+        post: pinwheels
+      - label: plate
+        full: empty
+  - name: 12. Place the pinwheels on a plate.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        pre: scrap #pinwheels
+      - label: plate
+        pre: empty
+        mid: with-pinwheels[partial]
+        post: with-pinwheels[full]
+  - name: 13. end.
+    objects:
+      - label: knife
+        full: clean
+      - label: tortilla
+        full: scrap
+      - label: plate
+        full: with-pinwheels[full]

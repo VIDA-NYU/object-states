@@ -1,0 +1,4 @@
+_BASE_: pinwheels.yaml
+DATASET:
+  ROOT: /datasets/Milly_pred4
+  VIDEO_PATTERN: /datasets/Milly/data/A*_pv.mp4

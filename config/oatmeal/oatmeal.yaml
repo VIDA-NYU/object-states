@@ -1,0 +1,13 @@
+_BASE_: ../base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_oatmeal_pred
+  VIDEO_PATTERN: /datasets/ptgrecipes-flat/oatmeal_*.mp4
+
+DATA:
+  VOCAB: 
+    - 
+  UNTRACKED_VOCAB:
+    - 
+
+STEPS:
+  - 

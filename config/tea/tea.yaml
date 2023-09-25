@@ -1,0 +1,13 @@
+_BASE_: ../base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_tea_pred
+  VIDEO_PATTERN: /datasets/ptgrecipes-flat/tea_*.mp4
+
+DATA:
+  VOCAB: 
+    - 
+  UNTRACKED_VOCAB:
+    - 
+
+STEPS:
+  - 
