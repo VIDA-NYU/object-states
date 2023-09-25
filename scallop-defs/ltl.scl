@@ -1,0 +1,105 @@
+// generic definitions of Linear Temporal Logic
+
+// Datalog implementation for fact checking
+rel true_at_frame(psi, object, fid) = prediction(psi, object, fid)
+
+// Datalog implementation for always (always true)
+rel always(psi, object, start_fid, end_fid + 1) = (
+    true_at_frame(psi, object, end_fid), 
+    eval(psi, object, start_fid, end_fid), 
+    start_fid < end_fid)
+
+// Datalog implementation for sometime (happens at some point)
+rel sometime(psi, object, start_fid, end_fid) = (
+    always(psi, object, start_fid_1, end_fid_1), 
+    start_fid >= first_fid,
+    end_fid <= last_fid,
+    start_fid < end_fid,
+    start_fid <= start_fid_1,
+    end_fid >= end_fid_1,
+    start_fid_1 < end_fid_1)
+
+// Datalog implementation for until (A happens then B)
+rel until(psi_1, psi_2, object, start_fid, end_fid) = (
+    eval(psi_1, object, start_fid, mid_fid), 
+    eval(psi_2, object, mid_fid + 1, end_fid))
+
+// Datalog implementation for finally (A happens and finally B happens)
+rel finally(psi_1, psi_2, object, start_fid_1, end_fid_2) = (
+    eval(psi_1, object, start_fid_1, end_fid_1), 
+    eval(psi_2, object, start_fid_2, end_fid_2), 
+    start_fid_1 < start_fid_2)
+
+// Datalog implementation for next (A happens and at the last time step, B happens)
+rel next(psi_1, psi_2, object, start_fid, end_fid) = (
+    eval(psi_1, object, start_fid, end_fid - 1), 
+    eval(psi_2, object, end_fid - 1, end_fid))
+
+// Putting them all together using facts
+
+// fact at a single point
+rel eval(psi, object, fid, fid + 1) = true_at_frame(psi, object, fid)
+// fact at all points in time range
+rel eval(psi, object, start_fid, end_fid) = always(psi, object, start_fid, end_fid)
+// sometime
+rel eval(psi, object, start_fid, end_fid) = sometime_expr(psi, psi_1), sometime(psi_1, object, start_fid, end_fid)
+// until
+rel eval(psi, object, start_fid, end_fid) = until_expr(psi, psi_1, psi_2), until(psi_1, psi_2, object, start_fid, end_fid)
+// finally
+rel eval(psi, object, start_fid_1, end_fid_2) = finally_expr(psi, psi_1, psi_2), finally(psi_1, psi_2, object, start_fid_1, end_fid_2)
+// next
+rel eval(psi, object, start_fid, end_fid) = next_expr(psi, psi_1, psi_2), next(psi_1, psi_2, object, start_fid, end_fid)
+
+
+
+// 
+
+rel pre_post_conditions(psi, object)
+
+
+
+
+
+
+
+// Now an example - picking up a cup
+
+rel first_fid = 0;
+rel last_fid = 7;
+
+// facts
+rel frames = {0, 1, 2, 3, 4, 5, 6, 7}
+rel until_expr = {
+    // grab, starts with on_table, ends with touching object
+    ("grab", "on_table", "touching")
+}
+// rel always_expr = {
+//     ("on_table",), 
+//     ("touching",)
+// }
+rel prediction = {
+0.9::("on_table", "cup_1", 0),
+0.9::("on_table", "cup_1", 1),
+0.7::("on_table", "cup_1", 2),
+0.1::("on_table", "cup_1", 3),
+0.1::("on_table", "cup_1", 4),
+
+0.1::("touching", "cup_1", 0),
+0.1::("touching", "cup_1", 1),
+0.7::("touching", "cup_1", 2),
+0.9::("touching", "cup_1", 3),
+0.9::("touching", "cup_1", 4),
+
+0.1::("touching", "orange_1", 0),
+0.1::("touching", "orange_1", 1),
+0.1::("touching", "orange_1", 2),
+0.1::("touching", "orange_1", 3),
+0.1::("touching", "orange_1", 4),
+}
+
+// query: what got picked up between frames 0 and 5?
+query eval("grab", object, 0, 3)
+query eval("touching", object, 0, 2)
+query eval("touching", object, 3, 4)
+query eval(action, object, 0, 3)
+query eval(action, object, 0, 2)
