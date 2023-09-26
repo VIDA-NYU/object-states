@@ -62,3 +62,13 @@ Processing:
       - MSE to step percentage
       - plot step+MSE over time
       - count separate polygons over time
+
+## TODOs
+
+1. Convert steps to object states
+
+3. Linear Temporal Logic
+
+4. Merge script
+
+4. End-to-End runnable pipeline

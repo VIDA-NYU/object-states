@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from yacs.config import CfgNode as CN
+# from yacs.config import CfgNode as CN
+from fvcore.common.config import CfgNode as CN
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -9,7 +10,7 @@ BASE_CONFIG = CONFIG_DIR / 'base.yaml'
 
 
 _C = CN(new_allowed=True)
-_C.merge_from_file(BASE_CONFIG)
+# _C.merge_from_file(BASE_CONFIG)
 # cfg.freeze()
 
 

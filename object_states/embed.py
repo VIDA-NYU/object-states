@@ -29,7 +29,7 @@ device = "cuda"
 import ipdb
 @ipdb.iex
 @torch.no_grad()
-def main(config_fname, field='detections_tracker'):
+def main(config_fname, field='detections_tracker', file_path=None):
     cfg = get_cfg(config_fname)
 
     dataset_dir = cfg.DATASET.ROOT
@@ -49,45 +49,26 @@ def main(config_fname, field='detections_tracker'):
     )
 
     view = dataset.view()
-    view.compute_metadata(overwrite=True)
+    if file_path:
+        view = view.match(F("filepath") == os.path.abspath(filepath))
+        assert len(view) == 1
 
-    # add_step_annotations(view, cfg.DATASET.STEPS_CSV)
-    steps_df = pd.read_csv(cfg.DATASET.STEPS_CSV)
-    steps_df['start_frame'] = steps_df.start_frame.astype(int) + 1
-    steps_df['stop_frame'] = steps_df.stop_frame.astype(int) + 1
-    steps_df['step_index'] = pd.to_numeric(steps_df.narration.str.split('.').str[0], errors='coerce')
-    steps_df = steps_df[~pd.isna(steps_df.step_index)]
-    assert len(steps_df), "umm...."
+    view.compute_metadata(overwrite=True)
 
     # ------------------------- Prepare output directory ------------------------- #
 
     out_dir = os.path.join(dataset_dir, 'embeddings', field)
     os.makedirs(out_dir, exist_ok=True)
 
-
     # Define a single transform that combines all augmentations
     if n_augs:
-        image_augmentation = T.Compose([
-            T.RandomHorizontalFlip(p=0.5),
-            T.RandomVerticalFlip(p=0.5),
-            T.RandomRotation(degrees=(-30, 30)),
-            T.AugMix(),
-            T.TrivialAugmentWide(),
-            # T.ColorJitter(brightness=0.2, contrast=0.2),
-            # T.RandomAffine(degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), shear=10),
-            # T.GaussianBlur(kernel_size=5, sigma=(0.2, 1)),
-            # T.ElasticTransform(alpha=1.0, sigma=50),
-            # T.Perspective(distortion_scale=0.5),
-        ])
-
+        image_augmentation = get_augmentor(cfg)
 
     # ----------------------------- Loop over videos ----------------------------- #
 
     for sample in tqdm.tqdm(view):
-        video_id = fname_to_video_id(sample.filepath)
         video_name = os.path.basename(sample.filepath)
         video_out_dir = os.path.join(out_dir, video_name)
-        sdf = steps_df[steps_df.video_id == video_id]
         if os.path.isdir(video_out_dir):
             tqdm.tqdm.write(f"Skipping {video_out_dir} already exists")
             continue
@@ -112,15 +93,6 @@ def main(config_fname, field='detections_tracker'):
             if not len(detections):
                 continue
 
-            # ---------------------------- Get step annotation --------------------------- #
-
-            step_rows = sdf[(i >= sdf.start_frame) & (i <= sdf.stop_frame)].iloc[:1]
-            if not len(step_rows):
-                continue
-            row = step_rows.iloc[0]
-            step, idx, start, end = row.narration, row.step_index, row.start_frame, row.stop_frame
-            pct = (i - start) / (end - start)
-
             # ---------------------------- Get clip embeddings --------------------------- #
 
             for xyxy, _, conf, _, track_id in detections:
@@ -129,7 +101,7 @@ def main(config_fname, field='detections_tracker'):
                 if not crop.size:
                     continue
                 crop = Image.fromarray(crop)
-                aug_crop = Image.fromarray(crop_box(rgb, xyxy, padding=10))
+                aug_crop = Image.fromarray(crop_box(rgb, xyxy, padding=15))
                 aug_crops = [aug_crop] + [
                     image_augmentation(aug_crop)
                     for i in range(n_augs)
@@ -140,15 +112,10 @@ def main(config_fname, field='detections_tracker'):
                 z = model.encode_image(x).cpu().numpy()
 
                 embeddings[track_id]['clip']['z'].extend(z)
-                embeddings[track_id]['clip']['steps'].extend([step]*len(z))
-                embeddings[track_id]['clip']['index'].extend([idx]*len(z))
-                embeddings[track_id]['clip']['pct'].extend([pct]*len(z))
+                embeddings[track_id]['clip']['frame_index'].extend([i]*len(z))
                 embeddings[track_id]['clip']['augmented'].extend([False] + [True]*len(aug_crops))
 
-            tqdm.tqdm.write(f'{step} ({idx}) {pct:.2%} {len(detections)}')
-
-
-            # # --------------------------- Get Detic embeddings --------------------------- #
+            # --------------------------- Get Detic embeddings --------------------------- #
             
             if skip_every and i % (skip_every*3): continue
 
@@ -157,15 +124,11 @@ def main(config_fname, field='detections_tracker'):
 
             for track_id, z in zip(detections.tracker_id, z_detic):
                 embeddings[track_id]['detic']['z'].append(z.mean(0))
-                embeddings[track_id]['detic']['steps'].append(step)
-                embeddings[track_id]['detic']['index'].append(idx)
-                embeddings[track_id]['detic']['pct'].append(pct)
+                embeddings[track_id]['detic']['frame_index'].append(i)
 
                 for stage in range(z.shape[0]):
                     embeddings[track_id][f'detic_s{stage}']['z'].append(z[stage])
-                    embeddings[track_id][f'detic_s{stage}']['steps'].append(step)
-                    embeddings[track_id][f'detic_s{stage}']['index'].append(idx)
-                    embeddings[track_id][f'detic_s{stage}']['pct'].append(pct)
+                    embeddings[track_id][f'detic_s{stage}']['frame_index'].append(i)
 
         # ------------------------- Write embeddings to file ------------------------- #
 
@@ -175,12 +138,42 @@ def main(config_fname, field='detections_tracker'):
                 os.makedirs(os.path.dirname(fname), exist_ok=True)
                 data = {k: np.array(x) for k, x in data.items()}
                 print(fname, {k: x.shape for k, x in data.items()})
-                np.savez(fname, **data, video_id=video_id, video_name=video_name)
+                np.savez(fname, **data, video_name=video_name)
 
 
 def augment_frame(frame):
     return frame[None]  # TODO
 
+def get_augmentor(cfg=None, flip=True):
+    aug = T.Compose([
+        *([
+            T.RandomHorizontalFlip(p=0.5),
+            T.RandomVerticalFlip(p=0.5),
+        ] if flip else []),
+        T.RandomRotation(degrees=(-30, 30)),
+        T.AugMix(),
+        # T.TrivialAugmentWide(), # this polarizes
+        # T.ColorJitter(brightness=0.2, contrast=0.2),
+        # T.RandomAffine(degrees=0, translate=(0.2, 0.2), scale=(0.8, 1.2), shear=10),
+        # T.ElasticTransform(alpha=1.0, sigma=1.),
+        T.RandomPerspective(distortion_scale=0.5),
+        # T.GaussianBlur(kernel_size=3, sigma=(0.2, 1)),
+    ])
+    return aug
+
+def test_aug_frame(video_path, out_path='augtest.mp4'):
+    cfg = None#get_cfg(config_fname)
+    aug = get_augmentor(cfg, flip=False)
+
+    video_info = sv.VideoInfo.from_video_path(video_path=video_path)
+
+    with sv.VideoSink(out_path, video_info) as s:
+        for i, frame in tqdm.tqdm(
+            enumerate(sv.get_video_frames_generator(video_path), 1),
+            total=video_info.total_frames,
+            desc=video_path
+        ):
+            s.write_frame(np.array(aug(Image.fromarray(frame[:,:,::-1])))[:,:,::-1])
 
 if __name__ == '__main__':
     import fire

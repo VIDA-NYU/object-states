@@ -3,6 +3,8 @@ DATASET:
   VIDEO_PATTERN: /datasets/Milly/data/*_pv.mp4
   STEPS_CSV: /datasets/Milly_full.csv
   # EMBEDDING_DIR: /datasets/Milly_pred/embeddings/detections_tracker
+  STATES_CSV: /datasets/PTG Labels - State Annotations.csv
+  META_CSV: /datasets/PTG Labels - Metadata.csv
 
   N_AUGMENTATIONS: 10
   EMBED_SKIP: 5
@@ -44,6 +46,3 @@ XMEM:
     'max_age': 60,  # in steps
     # 'min_iou': 0.3,
   }
-
-
-EVAL: {}

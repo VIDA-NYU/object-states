@@ -13,9 +13,11 @@ from torchvision.ops import masks_to_boxes
 from .config import get_cfg
 from .util.video import XMemSink, DetectionAnnotator, iter_video
 from .util.format_convert import *
+from .util.vocab import prepare_vocab
 
 from xmem import XMem
 from detic import Detic
+from egohos import EgoHos
 
 log = logging.getLogger(__name__)
 
@@ -24,11 +26,16 @@ device = 'cuda'
 import ipdb
 @ipdb.iex
 @torch.no_grad()
-def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_every=1):
+def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_every=1, file_path=None):
     cfg = get_cfg(config_fname)
+    print(cfg)
     
-    dataset_dir = cfg.DATASET.ROOT
+    root_dataset_dir = dataset_dir = cfg.DATASET.ROOT
     video_pattern = cfg.DATASET.VIDEO_PATTERN
+
+    if file_path:
+        dataset_dir = os.path.join(dataset_dir, os.path.basename(file_path))
+        video_pattern = file_path
 
     if not field:
         field = 'detections'
@@ -62,20 +69,31 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
 
     # --------------------------- Load object detector --------------------------- #
 
-    UNTRACKED_VOCAB = cfg.DATA.UNTRACKED_VOCAB
-    TRACKED_VOCAB = cfg.DATA.VOCAB
-    VOCAB = TRACKED_VOCAB + UNTRACKED_VOCAB
     CONFIDENCE = cfg.DETIC.CONFIDENCE
     detect_every = cfg.DETIC.DETECT_EVERY
+    hoi_detect_every = 3
+
+    untracked_prompts, UNTRACKED_VOCAB = prepare_vocab(cfg.DATA.UNTRACKED_VOCAB)
+    tracked_prompts, TRACKED_VOCAB = prepare_vocab(cfg.DATA.VOCAB)
+    PROMPTS = list(untracked_prompts) + list(tracked_prompts)
+    VOCAB = list(UNTRACKED_VOCAB) + list(TRACKED_VOCAB)
+    print("Prompts:")
+    for p, v in zip(prompts, VOCAB):
+        print(v, ':', p)
+    input()
 
     # object detector
-    detic = Detic(VOCAB, conf_threshold=CONFIDENCE, masks=True, max_size=500)
+    detic = Detic(PROMPTS, conf_threshold=CONFIDENCE, masks=True, max_size=500).cuda().eval()
     print(detic.labels)
+
+    # # hand-object interactions
+    # egohos = EgoHos(mode='obj1', device=device).cuda().eval()
+    # egohos_classes = np.array(list(egohos.CLASSES))
 
     # ---------------------------- Load object tracker --------------------------- #
 
     print(cfg.XMEM.CONFIG)
-    xmem = XMem(cfg.XMEM.CONFIG).cuda()
+    xmem = XMem(cfg.XMEM.CONFIG).cuda().eval()
     xmem.track_detections = {}
     xmem.label_counts = defaultdict(lambda: Counter())
 
@@ -89,7 +107,7 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
             
             if n_detections:
                 log.info(f'{sample.filepath} has {n_detections}. {min(idxs)}-{max(idxs)} out of {len(sample.frames)}')
-    input('continue:')
+    # input('continue:')
 
     # ----------------------------- Loop over videos ----------------------------- #
 
@@ -126,24 +144,28 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
                     
                     # --------------------------------- detection -------------------------------- #
 
+                    hoi_dets = None
+                    # if not i % hoi_detect_every or not i % detect_every:
                     dets = None
                     if not stop_detect_after or i < stop_detect_after:
                         if detect and not i % detect_every:
-                            dets = do_detect(detic, frame)
+                            hoi_dets = do_egohos(egohos, frame)
+                            finfo['hoi'] = hoi_dets
+                            dets = do_detect(detic, frame, VOCAB)
                             finfo[field] = dets
                             detections, labels = fo_to_sv(dets, frame.shape[:2])
                             det_frame = ann.annotate(frame, detections, labels)
 
                     # --------------------------------- tracking --------------------------------- #
 
-                    dets = do_xmem(xmem, frame, dets, TRACKED_VOCAB)
+                    dets = do_xmem(xmem, frame, dets, hoi_dets, TRACKED_VOCAB)
                     finfo[track_field] = dets
 
                     # ---------------------------------- drawing --------------------------------- #
 
                     detections, labels = fo_to_sv(dets, frame.shape[:2])
                     track_frame = ann.annotate(frame.copy(), detections, labels)
-                    s.tracks.write_frame(frame, detections)
+                    s.tracks.write_frame(track_frame, detections, labels, i)
                     s.write_frame(np.hstack([track_frame, det_frame]))
 
                     try:
@@ -171,13 +193,29 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
 # ---------------------------------------------------------------------------- #
 
 
-def do_detect(model, frame):
+def do_egohos(model, frame):
+    # get hoi detections
+    masks, class_ids = model(frame)
+    boxes = masks_to_boxes(masks).int().cpu().numpy().tolist()
+    return fo.Detections(detections=[
+        fo.Detection(
+            mask=mask2detection(m).mask,
+            bounding_box=b,
+            label=model.CLASSES[cid]
+        )
+        for m, b, cid in zip(masks, boxes, class_ids)
+    ])
+
+
+def do_detect(model, frame, labels):
+    if labels is None:
+        labels = model.labels
     outputs = model(frame)
-    log.debug(f"Detected: {model.labels[outputs['instances'].pred_classes.int().cpu().numpy()]}")
-    return detectron_to_fo(outputs, model.labels, frame.shape)
+    log.debug(f"Detected: {labels[outputs['instances'].pred_classes.int().cpu().numpy()]}")
+    return detectron_to_fo(outputs, labels, frame.shape)
 
 
-def do_xmem(xmem, frame, gt, track_labels=None, width=288):
+def do_xmem(xmem, frame, gt, gt_hoi, track_labels=None, width=288):
     # ------------------------------- Resize frame ------------------------------- #
 
     ho, wo = frame.shape[:2]
@@ -186,30 +224,20 @@ def do_xmem(xmem, frame, gt, track_labels=None, width=288):
 
     # ----------------------- Load detections from FiftyOne ---------------------- #
 
-    gt_mask = gt_labels = None
-    if gt is not None:
-        gt = [d for d in gt.detections if d.mask is not None]
-        
-        if track_labels is not None:  # only track certain labels
-            gt = [d for d in gt if d.label in track_labels]
-
-        if len(gt):  # get masks and labels
-            gt_labels = np.array([d.label for d in gt])
-            gt_mask = torch.stack([
-                detection2mask(d, (wo,ho), (w, h)) 
-                for d in gt
-            ]).cuda()
-            log.debug(f"Using detections: {gt_labels}")
+    gt_mask, gt_labels, dets = get_masks_and_labels(gt, (wo,ho), (w, h), track_labels)
+    hoi_mask, _, _ = get_masks_and_labels(gt_hoi, (wo,ho), (w, h), ['hand(left)', 'hand(right)'])
+    if hoi_mask is not None:
+        hoi_mask = hoi_mask.sum(0)
 
     # ------------------------------- Track objects ------------------------------ #
 
-    pred_mask, track_ids, input_track_ids = xmem(frame, gt_mask, only_confirmed=True)
+    pred_mask, track_ids, input_track_ids = xmem(frame, gt_mask, negative_mask=hoi_mask, only_confirmed=True)
     boxes = masks_to_boxes(pred_mask)
     boxes = xyxy2xywhn(boxes, frame.shape).tolist()
     log.debug(f"Tracks: {track_ids} input tracks: {input_track_ids}")
 
     if gt_mask is not None:
-        for tid, det in zip(input_track_ids, gt):
+        for tid, det in zip(input_track_ids, dets):
             xmem.track_detections[tid] = det
         for tid, label in zip(input_track_ids, gt_labels):
             xmem.label_counts[tid].update([label])
@@ -229,6 +257,22 @@ def do_xmem(xmem, frame, gt, track_labels=None, width=288):
     
     return fo.Detections(detections=detections)
     
+
+def get_masks_and_labels(gt, og_shape, pred_shape, filter_labels=None):
+    gt_mask = gt_labels = None
+    if gt is not None:
+        gt = [d for d in gt.detections if d.mask is not None]
+        
+        if filter_labels is not None:  # only track certain labels
+            gt = [d for d in gt if d.label in filter_labels]
+
+        if len(gt):  # get masks and labels
+            gt_labels = np.array([d.label for d in gt])
+            gt_mask = torch.stack([
+                detection2mask(d, og_shape, pred_shape) 
+                for d in gt
+            ]).cuda()
+    return gt_mask, gt_labels, gt
 
 
 

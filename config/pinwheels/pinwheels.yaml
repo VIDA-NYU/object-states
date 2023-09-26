@@ -1,17 +1,26 @@
 _BASE_: ../base.yaml
 DATASET:
-  ROOT: /datasets/ptgrecipes_pinwheels_pred
+  ROOT: /datasets/ptgrecipes_pinwheels_pred3
   VIDEO_PATTERN: /datasets/ptgrecipes-flat/pinwheels_*.mp4
 
 DATA:
   VOCAB: 
-    - tortilla, white flour, circular
+    - tortilla white flour circular: tortilla
+    - tortilla pizza plain circular: tortilla
+    - tortilla pizza circular paper_plate: tortilla
+    - rolled crape crabmeat string_cheese nailfile: tortilla
   UNTRACKED_VOCAB:
+    - tortilla plastic_bag packet ice_pack circular: package_tortilla
+    - scraps wrap candle butter tape_(sticky_cloth_or_paper): tortilla_piece
+    - wrap candle butter string_cheese square: tortilla_piece
     - knife
     - plate
     # - peanut butter
     # - jelly
     - jar
+    - cutting board
+    - toothpicks
+    - floss
     - person
 
 STEPS:

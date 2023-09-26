@@ -14,37 +14,154 @@ from sklearn.manifold import TSNE, Isomap
 
 from .config import get_cfg
 
+from IPython import embed
+
 
 # ---------------------------------------------------------------------------- #
 #                                 Data Loading                                 #
 # ---------------------------------------------------------------------------- #
 
 
-def load_data(data_file_pattern, use_aug=True):
+# def load_annotations(cfg):
+#     # add_step_annotations(view, cfg.DATASET.STEPS_CSV)
+#     steps_df = pd.read_csv(cfg.DATASET.STEPS_CSV)
+#     steps_df['start_frame'] = steps_df.start_frame.astype(int) + 1
+#     steps_df['stop_frame'] = steps_df.stop_frame.astype(int) + 1
+#     steps_df['step_index'] = pd.to_numeric(steps_df.narration.str.split('.').str[0], errors='coerce')
+#     steps_df = steps_df[~pd.isna(steps_df.step_index)]
+#     assert len(steps_df), "umm...."
+#     return steps_df, steps_df
+
+# def load_annotations(cfg):
+#     meta_df = pd.read_csv(cfg.DATASET.META_CSV).set_index('video_name')
+#     object_names = []
+#     for c in meta_df.columns:
+#         if c.startswith('#'):
+#             meta_df[c[1:]] = meta_df.pop(c).apply(lambda s: list(map(int, str(s).split('+'))))
+#             object_names.append(c[1:])
+
+#     states_df = pd.read_csv(cfg.DATASET.STATES_CSV)
+#     states_df = states_df[states_df.time.fillna('') != '']
+#     states_df['time'] = pd.to_timedelta(states_df.time)
+#     states_df['start_frame'] = (states_df.time.dt.total_seconds() * meta_df.fps.loc[states_df.video_name]).astype(int)
+#     states_df['stop_frame'] = states_df['start_frame'].shift(-1)
+#     states_df = states_df.ffill()
+#     assert len(steps_df), "umm...."
+#     return steps_df, meta_df, object_names
+
+# def get_ann(cfg, steps_df, track_df, file_path, frame_idx):
+#     video_id = fname_to_video_id(file_path)
+#     sdf = steps_df[steps_df.video_id == video_id]
+#     step_rows = sdf[(i >= sdf.start_frame) & (pd.isna(sdf.stop_frame) | (i <= sdf.stop_frame))]
+#     if not len(step_rows):
+#         return {
+
+#         }
+#     row = step_rows.iloc[0]
+#     step = row.narration
+#     step_index = row.step_index
+#     start, end = row.start_frame, row.stop_frame
+#     pct = (i - start) / (end - start)
+#     step = cfg.STEPS[step_index]
+#     stages = [name for name, (start, end) in cfg.DATA.STEP_STAGES.items() if start <= pct < end]
+#     return {
+#         "objects": {
+#             d['label']: [
+#                 state for stg in stages
+#                 for state in (d.get(stg) or [])
+#             ]
+#             for d in step['objects']
+#         },
+#         "step": row.narration,
+#         "step_index": row.step_index,
+#         "percent": pct,
+#     }
+
+
+def load_object_annotations(cfg):
+    meta_df = pd.read_csv(cfg.DATASET.META_CSV).set_index('video_name')
+    object_names = []
+    for c in meta_df.columns:
+        if c.startswith('#'):
+            meta_df[c[1:]] = meta_df.pop(c).fillna('').apply(lambda s: [int(float(x)) for x in str(s).split('+') if x != ''])
+            object_names.append(c[1:])
+
+    states_df = pd.read_csv(cfg.DATASET.STATES_CSV)
+    states_df = states_df[states_df.time.fillna('') != '']
+    states_df['time'] = pd.to_timedelta(states_df.time.apply(lambda x: f'00:{x}'))
+    # embed()
+    states_df['start_frame'] = (states_df.time.dt.total_seconds() * meta_df.fps.loc[states_df.video_name].values).astype(int)
+    # states_df['stop_frame'] = states_df['start_frame'].shift(-1)
+    
+    # creating a dict of {video_id: {track_id: df}}
+    dfs = {}
+    for vid, row in meta_df.iterrows():
+        objs = {}
+        sdf = states_df[states_df.video_name == vid]
+        for c in object_names:
+            if c not in sdf.columns:
+                continue
+            odf = sdf[[c, 'start_frame']].copy().rename(columns={c: "state"})
+            odf = odf[odf.state.fillna('') != '']
+            odf['stop_frame'] = odf['start_frame'].shift(-1)
+            if not len(odf):
+                continue
+            for track_id in row[c]:
+                objs[track_id] = odf
+        # if not len(objs):
+        #     continue
+        dfs[vid] = objs
+            
+    return dfs
+
+def get_obj_anns(df, frame_idx):
+    idxs = []
+    for i in frame_idx:
+        d = df[(df.start_frame >= i) & (pd.isna(df.stop_frame) | (df.stop_frame < i))]
+        idxs.append(d.state[0] if len(d) else None)
+    return np.array(idxs)
+
+
+
+def load_data(cfg, data_file_pattern, use_aug=True):
     '''Load npz files (one per video) with embedding and label keys and concatenate'''
     embeddings_list, labels_list, video_ids_list = [], [], []
 
     class_map = {}
+
+    # steps_df, meta_df, object_names = load_annotations(cfg)
+    dfs = load_object_annotations(cfg)
 
     fs = glob.glob(data_file_pattern)
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
         data = np.load(f)
         z = data['z']
+        frame_idx = data['frame_index']
         aug = data.get('augmented')
         if aug is None or use_aug:
             aug = np.zeros(len(z), dtype=bool)
 
+        video_id = data.get('video_name')
+        if video_id is None:
+            video_id = f.split('/')[-3].rsplit('.', 1)[0]
+        else:
+            video_id = video_id.item()
+        track_id = data.get('track_id')
+        if track_id is None:
+            track_id = f.split('_')[-1].split('.')[0]
+        else:
+            track_id = track_id.item()
+
+        # ann = get_ann(cfg, steps_df, data['video_name'], frame_idx)
+        ann = get_obj_anns(dfs[video_id][track_id], frame_idx)
+
         z = z[~aug]
-        steps = data['steps'][~aug]
-        idx = data['index'][~aug]
-        pct = data['pct'][~aug]
+        # steps = data['steps'][~aug]
+        # idx = data['index'][~aug]
+        # pct = data['pct'][~aug]
         class_map.update(dict(zip(idx, steps)))
-
-
-        idx[pct > 0.85] += 1
-        video_id = data['video_id']
-        video_id = f.split('/')[-3]
+        # idx[pct > 0.85] += 1
 
         embeddings_list.append(z)
         labels_list.append(idx)
@@ -218,11 +335,13 @@ def n_videos_class_metrics(plot_dir, all_metrics, prefix=''):
 
 import ipdb
 @ipdb.iex
-def main(config_name):
+def run(config_name):
     cfg = get_cfg(config_name)
     os.makedirs('plots', exist_ok=True)
 
-    emb_dir = cfg.DATASET.EMBEDDING_DIR
+    # emb_dir = cfg.DATASET.EMBEDDING_DIR
+    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
+    emb_types = cfg.EVAL.EMBEDDING_TYPES
 
     all_metrics = []
     all_per_class_metrics = []
@@ -235,10 +354,10 @@ def main(config_name):
     ]
 
     # , 'detic', 'detic_s0', 'detic_s1', 'detic_s2'
-    for emb_type in tqdm.tqdm(['clip', 'detic', 'detic_s0', 'detic_s1', 'detic_s2'], desc='embedding type'):
+    for emb_type in tqdm.tqdm(emb_types, desc='embedding type'):
         data_file_pattern = f'{emb_dir}/*/{emb_type}/*.npz'
 
-        X, y, video_ids, class_map = load_data(data_file_pattern, use_aug=False)
+        X, y, video_ids, class_map = load_data(cfg, data_file_pattern, use_aug=False)
 
         unique_vid_ids = np.unique(video_ids)
         print("all data:")
@@ -311,6 +430,36 @@ def show_counts(y):
         print(yui, c)
     return dict(zip(yu, counts))
 
+import ipdb
+@ipdb.iex
+def show_data(config_name, emb_type='clip'):
+    cfg = get_cfg(config_name)
+    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
+    emb_types = cfg.EVAL.EMBEDDING_TYPES
+    data_file_pattern = f'{emb_dir}/*/{emb_type}/*.npz'
+    dfs = load_object_annotations(cfg)
+    # for vid, odfs in dfs.items():
+    #     print(vid)
+    #     print(set(odfs))
+    # input()
+    for vid, odfs in dfs.items():
+        print(vid)
+        print({k: odfs[k].shape for k in odfs})
+    for vid, odfs in dfs.items():
+        print(vid)
+        for k in odfs:
+            print(k)
+            print(odfs[k])
+    # embed()
+
+    X, y, video_ids, class_map = load_data(cfg, data_file_pattern, use_aug=False)
+    # df = pd.DataFrame({'vids': video_ids, 'y': y})
+    # df['label'] = df.y.apply(lambda y: class_map[y])
+    # for v, rows in df.groupby('vids'):
+    #     print(v)
+    #     print(rows.label.value_counts())
+
+
 if __name__ == '__main__':
     import fire
-    fire.Fire(main)
+    fire.Fire()

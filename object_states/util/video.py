@@ -1,5 +1,6 @@
 import os
 import tqdm
+from collections import Counter
 import cv2
 import numpy as np
 import supervision as sv
@@ -38,10 +39,11 @@ class DetectionSink(sv.VideoSink):
 class XMemSink(sv.VideoSink):
     '''Create both a full video
     '''
-    def __init__(self, target_path, video_info):
+    def __init__(self, target_path, video_info, **kw):
+        os.makedirs(target_path, exist_ok=True)
         super().__init__(f'{target_path}/full.mp4', video_info)
         # self.ann = DetectionAnnotator()
-        self.tracks = TrackSink(target_path, video_info)
+        self.tracks = TrackSink(target_path, video_info, **kw)
 
     def __enter__(self):
         self.tracks.__enter__()
@@ -76,22 +78,38 @@ class TrackSink:
             w.__exit__(*a)
             if w.count < self.min_frames:
                 os.remove(w.target_path)
+            else:
+                f = w.target_path
+                label = w.label_counts.most_common()
+                label = (label or [[None]])[0][0]
+                f2 = '{}_{l}_{s}-{e}{}'.format(
+                    *os.path.splitext(f), 
+                    s=w.first_seen, 
+                    e=w.last_seen,
+                    l=label or 'noclass')
+                os.rename(f, f2)
 
-    def write_frame(self, frame, detections):
-        for tid, bbox in zip(detections.tracker_id, detections.xyxy):
-            self._write_frame(self._get_writer(tid), frame, bbox)
+    def write_frame(self, frame, detections, labels=None, frame_idx=None):
+        if labels is None:
+            labels = [None]*len(detections)
+        for tid, bbox, label in zip(detections.tracker_id, detections.xyxy, labels):
+            self._write_frame(self._get_writer(tid, frame_idx), frame, bbox, label, frame_idx)
 
-    def _get_writer(self, tid):
+    def _get_writer(self, tid, frame_idx):
         if tid in self.writers:
             return self.writers[tid]
         fname = f'{self.out_dir}/track_{tid}.mp4' #self.out_format.format(tid)
         os.makedirs(os.path.dirname(fname) or '.', exist_ok=True)
-        self.writers[tid] = sv.VideoSink(fname, self.video_info)
-        self.writers[tid].__enter__()
-        self.writers[tid].count = 0
-        return self.writers[tid]
+        self.writers[tid] = w = sv.VideoSink(fname, self.video_info)
+        w.__enter__()
+        w.count = 0
+        w.track_id = tid
+        w.label_counts = Counter()
+        w.first_seen = frame_idx or -1
+        w.last_seen = frame_idx or -1
+        return w
 
-    def _write_frame(self, writer, frame=None, bbox=None):
+    def _write_frame(self, writer, frame=None, bbox=None, label=None, frame_idx=None):
         if frame is None:
             frame = np.zeros(self.size, dtype='uint8')
         elif bbox is not None:
@@ -99,6 +117,10 @@ class TrackSink:
         frame = resize_with_pad(frame, self.size)
         writer.write_frame(frame)
         writer.count += 1
+        if frame_idx is not None:
+            writer.last_seen = frame_idx
+        if label is not None:
+            writer.label_counts.update([label])
 
 
 def crop_box(frame, bbox, padding=0):
