@@ -22,7 +22,7 @@ __pycache__/
 
 *.mp4
 
-plots
+plots*/
 
 # Distribution / packaging
 .Python

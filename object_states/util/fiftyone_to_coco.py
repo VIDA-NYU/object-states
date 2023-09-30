@@ -5,6 +5,8 @@ from object_states import _patch
 
 
 def convert_to_coco(dataset_dir, export_dir):
+    print("Source:", dataset_dir)
+    print("Destination:", export_dir)
     # load
     dataset = fo.Dataset.from_dir(
         dataset_dir=dataset_dir,
@@ -22,7 +24,7 @@ def convert_to_coco(dataset_dir, export_dir):
 
 def main(*dataset_dirs, out_dir='/datasets/coco_export'):
     for dataset_dir in dataset_dirs:
-        convert_to_coco(dataset_dir, os.path.join(out_dir, os.path.basename(dataset_dir)))
+        convert_to_coco(dataset_dir, os.path.join(out_dir, os.path.basename(dataset_dir.rstrip('/'))))
 
 if __name__ == '__main__':
     import fire
