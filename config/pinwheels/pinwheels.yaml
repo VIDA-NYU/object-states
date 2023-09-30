@@ -8,11 +8,11 @@ DATA:
     - tortilla white flour circular: tortilla
     - tortilla pizza plain circular: tortilla
     - tortilla pizza circular paper_plate: tortilla
-    - rolled crape crabmeat string_cheese nailfile: tortilla
+    # - rolled crape crabmeat string_cheese nailfile: tortilla
   UNTRACKED_VOCAB:
     - tortilla plastic_bag packet ice_pack circular: package_tortilla
-    - scraps wrap candle butter tape_(sticky_cloth_or_paper): tortilla_piece
-    - wrap candle butter string_cheese square: tortilla_piece
+    # - scraps wrap candle butter tape_(sticky_cloth_or_paper): tortilla_piece
+    # - wrap candle butter string_cheese square: tortilla_piece
     - knife
     - plate
     # - peanut butter

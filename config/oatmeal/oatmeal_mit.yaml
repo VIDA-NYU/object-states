@@ -1,0 +1,4 @@
+_BASE_: oatmeal.yaml
+DATASET:
+  ROOT: /datasets/MITEval-oatmeal
+  VIDEO_PATTERN: /datasets/mit-eval-videos/oatmeal_*.mp4

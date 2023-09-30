@@ -151,16 +151,18 @@ def resize_with_pad(image, new_shape):
 # ---------------------------------------------------------------------------- #
 
 
-def iter_video(video_sample):
+def iter_video(video_sample, pbar=False):
     video_path = video_sample.filepath
     video_info = sv.VideoInfo.from_video_path(video_path=video_path)
 
-    for i, frame in tqdm.tqdm(
+    it = tqdm.tqdm(
         enumerate(sv.get_video_frames_generator(video_path), 1),
         total=video_info.total_frames,
         desc=video_path
-    ):
-        yield i, frame, video_sample.frames[i]
+    )
+    for i, frame in it:
+        finfo = video_sample.frames[i]
+        yield (i, frame, finfo, it) if pbar else (i, frame, finfo)
 
 
 def get_video_info(src, size, fps_down=1, nrows=1, ncols=1):

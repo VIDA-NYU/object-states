@@ -5,9 +5,19 @@ DATASET:
 
 DATA:
   VOCAB: 
-    - 
+    # - tortilla white flour circular: tortilla
+    # - tortilla pizza plain circular: tortilla
+    # - tortilla pizza circular paper_plate: tortilla
+    - quesadilla pancake: tortilla
+    - plate
   UNTRACKED_VOCAB:
-    - 
+    - tortilla plastic_bag packet ice_pack circular: package_tortilla
+    - knife
+    - jar
+    - cutting board
+    - toothpicks
+    - floss
+    - person
 
 STEPS:
   - 

@@ -1,0 +1,4 @@
+_BASE_: pinwheels.yaml
+DATASET:
+  ROOT: /datasets/MITEval-pinwheels
+  VIDEO_PATTERN: /datasets/mit-eval-videos/pinwheels_*.mp4

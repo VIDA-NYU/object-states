@@ -1,0 +1,4 @@
+_BASE_: tea.yaml
+DATASET:
+  ROOT: /datasets/MITEval-tea
+  VIDEO_PATTERN: /datasets/mit-eval-videos/tea_*.mp4

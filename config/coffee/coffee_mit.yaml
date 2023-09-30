@@ -1,0 +1,4 @@
+_BASE_: coffee.yaml
+DATASET:
+  ROOT: /datasets/MITEval-coffee
+  VIDEO_PATTERN: /datasets/mit-eval-videos/coffee_*.mp4

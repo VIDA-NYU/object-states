@@ -3,17 +3,17 @@ DATASET:
   VIDEO_PATTERN: /datasets/Milly/data/*_pv.mp4
   STEPS_CSV: /datasets/Milly_full.csv
   # EMBEDDING_DIR: /datasets/Milly_pred/embeddings/detections_tracker
-  STATES_CSV: /datasets/PTG Labels - State Annotations.csv
-  META_CSV: /datasets/PTG Labels - Metadata.csv
+  STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
+  # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
+  # STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
+  META_CSV: /datasets/PTG Object State Labels - Metadata.csv
 
   N_AUGMENTATIONS: 10
   EMBED_SKIP: 5
 
 DATA:
-  VOCAB: 
-    - cat
-  UNTRACKED_VOCAB:
-   - person
+  VOCAB: []
+  UNTRACKED_VOCAB: []
 
   STEP_STAGES:
     pre: [0, 0.15]
@@ -22,7 +22,7 @@ DATA:
     full: [0, 1]
 
 EVAL:
-  DETECTION_NAME: detections_tracker
+  DETECTION_NAME: '*'
   EMBEDDING_TYPES: ['clip', 'detic', 'detic_s0', 'detic_s1', 'detic_s2']
 
 

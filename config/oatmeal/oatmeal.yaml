@@ -5,9 +5,9 @@ DATASET:
 
 DATA:
   VOCAB: 
-    - 
-  UNTRACKED_VOCAB:
-    - 
+    - bowl
+    - microwave
+  UNTRACKED_VOCAB: []
 
 STEPS:
   - 

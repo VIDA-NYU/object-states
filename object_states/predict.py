@@ -78,17 +78,18 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
     PROMPTS = list(untracked_prompts) + list(tracked_prompts)
     VOCAB = list(UNTRACKED_VOCAB) + list(TRACKED_VOCAB)
     print("Prompts:")
-    for p, v in zip(prompts, VOCAB):
+    for p, v in zip(PROMPTS, VOCAB):
         print(v, ':', p)
-    input()
+    # input()
 
     # object detector
     detic = Detic(PROMPTS, conf_threshold=CONFIDENCE, masks=True, max_size=500).cuda().eval()
+    detic.labels = np.array(VOCAB)
     print(detic.labels)
 
-    # # hand-object interactions
-    # egohos = EgoHos(mode='obj1', device=device).cuda().eval()
-    # egohos_classes = np.array(list(egohos.CLASSES))
+    # hand-object interactions
+    egohos = EgoHos(mode='obj1', device=device).cuda().eval()
+    egohos_classes = np.array(list(egohos.CLASSES))
 
     # ---------------------------- Load object tracker --------------------------- #
 
@@ -151,10 +152,10 @@ def main(config_fname, field=None, detect=None, stop_detect_after=None, skip_eve
                         if detect and not i % detect_every:
                             hoi_dets = do_egohos(egohos, frame)
                             finfo['hoi'] = hoi_dets
-                            dets = do_detect(detic, frame, VOCAB)
+                            dets = do_detect(detic, frame)
                             finfo[field] = dets
                             detections, labels = fo_to_sv(dets, frame.shape[:2])
-                            det_frame = ann.annotate(frame, detections, labels)
+                            det_frame = ann.annotate(frame, detections)
 
                     # --------------------------------- tracking --------------------------------- #
 
@@ -207,9 +208,8 @@ def do_egohos(model, frame):
     ])
 
 
-def do_detect(model, frame, labels):
-    if labels is None:
-        labels = model.labels
+def do_detect(model, frame):
+    labels = model.labels
     outputs = model(frame)
     log.debug(f"Detected: {labels[outputs['instances'].pred_classes.int().cpu().numpy()]}")
     return detectron_to_fo(outputs, labels, frame.shape)

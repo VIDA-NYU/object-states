@@ -16,6 +16,7 @@ from .util.format_convert import fo_to_sv
 from .util.step_annotations import add_step_annotations, fname_to_video_id
 
 from detic import Detic
+from IPython import embed
 
 
 import torch
@@ -29,7 +30,7 @@ device = "cuda"
 import ipdb
 @ipdb.iex
 @torch.no_grad()
-def main(config_fname, field='detections_tracker', file_path=None):
+def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], file_path=None):
     cfg = get_cfg(config_fname)
 
     dataset_dir = cfg.DATASET.ROOT
@@ -57,8 +58,9 @@ def main(config_fname, field='detections_tracker', file_path=None):
 
     # ------------------------- Prepare output directory ------------------------- #
 
-    out_dir = os.path.join(dataset_dir, 'embeddings', field)
-    os.makedirs(out_dir, exist_ok=True)
+    # for s in view:
+    #     print(s.filepath, {k: len([i for i in s.frames if s.frames[i][k] is not None]) for k in fields if s.frames[1].has_field(k)})
+    # input()
 
     # Define a single transform that combines all augmentations
     if n_augs:
@@ -68,6 +70,19 @@ def main(config_fname, field='detections_tracker', file_path=None):
 
     for sample in tqdm.tqdm(view):
         video_name = os.path.basename(sample.filepath)
+        
+        counts = {k: next((i for i in sample.frames if sample.frames[i][k] is not None), None) for k in fields if sample.frames[1].has_field(k)}
+        tqdm.tqdm.write(f"{video_name} field start frame: {counts}")
+        for field in fields:
+            if counts.get(field) is not None:
+                tqdm.tqdm.write(f"Using field {field} for {video_name}")
+                break
+        else:
+            tqdm.tqdm.write(f"\n\nSkipping {video_name} as it has no fields {fields}\n\n")
+            continue
+
+        out_dir = os.path.join(dataset_dir, 'embeddings', field)
+        os.makedirs(out_dir, exist_ok=True)
         video_out_dir = os.path.join(out_dir, video_name)
         if os.path.isdir(video_out_dir):
             tqdm.tqdm.write(f"Skipping {video_out_dir} already exists")
@@ -78,8 +93,8 @@ def main(config_fname, field='detections_tracker', file_path=None):
         # track_id, embedding_type, keys
         embeddings = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: [])))
 
-        for i, frame, finfo in iter_video(sample):
-            if skip_every and i % skip_every: continue
+        for i, frame, finfo, pbar in iter_video(sample, pbar=True):
+            # if skip_every and i % skip_every: continue
 
             # get detection
             try:
@@ -93,6 +108,8 @@ def main(config_fname, field='detections_tracker', file_path=None):
             if not len(detections):
                 continue
 
+            pbar.set_description(f'{len(detections)} {labels}')
+
             # ---------------------------- Get clip embeddings --------------------------- #
 
             for xyxy, _, conf, _, track_id in detections:
@@ -101,7 +118,7 @@ def main(config_fname, field='detections_tracker', file_path=None):
                 if not crop.size:
                     continue
                 crop = Image.fromarray(crop)
-                aug_crop = Image.fromarray(crop_box(rgb, xyxy, padding=15))
+                aug_crop = Image.fromarray(crop_box(rgb, xyxy, padding=30))
                 aug_crops = [aug_crop] + [
                     image_augmentation(aug_crop)
                     for i in range(n_augs)

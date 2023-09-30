@@ -6,6 +6,7 @@ DATASET:
 DATA:
   VOCAB: 
     - cup mug
+    # - cup mug chocolate_mousse cupcake
     - measuring_cup hand_glass tachometer
   UNTRACKED_VOCAB:
     - bowl cup 
@@ -13,7 +14,38 @@ DATA:
     - scale_(measuring_instrument) cigarette_case electronic calculator iPad
     - thermometer pocketknife
     - coffee_grinder thermos_bottle canister cup
+    - paper paper_plate cupcake-liner cupcake muffin_liner seashell
     - person
 
 STEPS:
-  - 
+  - name: 1. Measure 12 ounces of cold water and transfer to a kettle.
+    objects:
+      - label: measuring_cup
+        pre: empty
+        mid: full
+        post: empty
+  - name: 2. Assemble the filter cone. Place the dripper on top of a coffee mug.
+    objects:
+      - label: filter
+        pre: stacked
+        mid: folded
+        post: 
+      - 
+  - name: 3. Prepare the filter insert by folding the paper filter in half to create a semi-circle, and in half again to create a quarter-circle. Place the paper filter in the dripper and spread open to create a cone.
+    objects:
+      - label: 
+  - name: 4. Weigh the coffee beans and grind until the coffee grounds are the consistency of coarse sand, about 20 seconds. Transfer the grounds to the filter cone.
+    objects:
+      - label: 
+  - name: 5. Check the temperature of the water.
+    objects:
+      - label: 
+  - name: 6. Pour a small amount of water in the filter to wet the grounds. Wait about 30 seconds.
+    objects:
+      - label: 
+  - name: 7. Slowly pour the rest of the water over the grounds in a circular motion. Do not overfill beyond the top of the paper filter.
+    objects:
+      - label: 
+  - name: 8. Let the coffee drain completely into the mug before removing the dripper. Discard the paper filter and coffee grounds.
+    objects:
+      - label: 

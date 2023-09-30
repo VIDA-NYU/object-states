@@ -1,0 +1,8 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_eval
+  VIDEO_PATTERN: /datasets/ptgrecipes_eval/data/*.mp4
+
+EVAL:
+  TRAIN_CSV: config/train.txt
+  VAL_CSV: config/val.txt

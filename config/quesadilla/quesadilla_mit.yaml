@@ -1,0 +1,4 @@
+_BASE_: quesadilla.yaml
+DATASET:
+  ROOT: /datasets/MITEval-quesadilla
+  VIDEO_PATTERN: /datasets/mit-eval-videos/quesadilla_*.mp4
