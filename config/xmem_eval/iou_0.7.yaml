@@ -1,0 +1,7 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/xmem_eval_ioup7
+
+XMEM:
+  CONFIG:
+    min_iou: 0.7

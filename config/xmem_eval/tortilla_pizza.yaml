@@ -1,0 +1,13 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/xmem_eval_tortilla_pizza
+
+DATA:
+  # https://github.com/KaihuaTang/LVIS-for-mmdetection/blob/master/LVIS_utils.py
+  VOCAB: 
+    - tortilla white flour circular: tortilla
+    - tortilla pizza plain circular: tortilla
+    - tortilla pizza circular paper_plate: tortilla
+    - bowl
+    - microwave_oven
+    - plate

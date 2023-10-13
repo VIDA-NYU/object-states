@@ -17,12 +17,13 @@ __pycache__/
 *.so
 
 *.db
-
+*.zip
 *.lprof
 
 *.mp4
 
 plots*/
+outputs/
 
 # Distribution / packaging
 .Python

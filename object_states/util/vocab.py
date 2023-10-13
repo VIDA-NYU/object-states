@@ -12,6 +12,7 @@ def prepare_vocab(vocab):
                 classes.append(c)
                 mapped_classes.append(label)
         else:
-            classes.append(x)
-            mapped_classes.append(x)
+            xs = [x.strip() for x in x.split(':', 1)]
+            classes.append(xs[0])
+            mapped_classes.append(xs[-1])
     return np.array(classes), np.array(mapped_classes)

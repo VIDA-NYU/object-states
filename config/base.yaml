@@ -7,6 +7,9 @@ DATASET:
   # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
   # STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
   META_CSV: /datasets/PTG Object State Labels - Metadata.csv
+  STATES_CSVS:
+    super_simple: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
+    full: /datasets/PTG Object State Labels - Step Annotations.csv
 
   N_AUGMENTATIONS: 10
   EMBED_SKIP: 5
@@ -28,9 +31,14 @@ EVAL:
 
 DETIC: 
   CONFIDENCE: 0.5
-  DETECT_EVERY: 30
+  # DETECT_EVERY: 30
+  DETECT_EVERY_SECS: 1
+
+EGOHOS:
+  DETECT_EVERY: 0.5
 
 XMEM:
+  FRAME_SIZE: 420
   CONFIG: {
     'top_k': 15,
     'mem_every': 30,

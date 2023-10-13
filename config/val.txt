@@ -1,7 +1,0 @@
-#quesadilla_2023.06.16-18.53.43
-oatmeal_2023.06.30-20.21.07
-#pinwheels_2023.04.03-19.38.08
-
-quesadilla_mit-eval
-pinwheels_mit-eval
-#oatmeal_mit-eval

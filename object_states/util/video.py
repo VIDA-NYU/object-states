@@ -1,4 +1,5 @@
 import os
+import glob
 import tqdm
 from collections import Counter
 import cv2
@@ -12,13 +13,15 @@ import supervision as sv
 # ---------------------------------------------------------------------------- #
 
 class DetectionAnnotator:
-    def __init__(self):
-        self.box_ann = sv.BoxAnnotator(text_scale=0.4, text_padding=1)
-        self.mask_ann = sv.MaskAnnotator()
+    def __init__(self, **kw):
+        self.box_ann = sv.BoxAnnotator(text_scale=0.4, text_padding=1, **kw)
+        self.mask_ann = sv.MaskAnnotator(**kw)
 
-    def annotate(self, frame, detections, labels=None):
+    def annotate(self, frame, detections, labels=None, by_track=False):
+        if by_track:
+            detections.class_id = detections.tracker_id
         frame = self.mask_ann.annotate(frame, detections)
-        frame = self.box_ann.annotate(frame, detections, labels=labels)
+        frame = self.box_ann.annotate(frame, detections, labels=labels, skip_label=labels is None)
         return frame
 
 
@@ -26,7 +29,15 @@ class DetectionAnnotator:
 #                                 Video Writers                                #
 # ---------------------------------------------------------------------------- #
 
-class DetectionSink(sv.VideoSink):
+class VideoSink(sv.VideoSink):
+    def write_frame(self, frame):
+        sh = frame.shape[:2]
+        she = (self.video_info.height, self.video_info.width)
+        assert sh == she, f"Frame must be size: {sh}. Got {she}"
+        return super().write_frame(frame)
+
+
+class DetectionSink(VideoSink):
     def __init__(self, target_path, video_info):
         super().__init__(target_path, video_info)
         self.ann = DetectionAnnotator()
@@ -36,7 +47,7 @@ class DetectionSink(sv.VideoSink):
         return super().write_frame(frame)
 
 
-class XMemSink(sv.VideoSink):
+class XMemSink(VideoSink):
     '''Create both a full video
     '''
     def __init__(self, target_path, video_info, **kw):
@@ -62,13 +73,20 @@ class XMemSink(sv.VideoSink):
 class TrackSink:
     '''Create videos cropped to each track bounding box.
     '''
-    def __init__(self, out_dir, video_info, size=200, padding=0, min_frames=10):
+    def __init__(self, out_dir, video_info, size=200, padding=0, min_frames=10, remove_existing=True):
         self.out_dir = out_dir
         self.video_info = sv.VideoInfo(width=size, height=size, fps=video_info.fps)
         self.size = (self.video_info.height, self.video_info.width)
         self.padding = padding
         self.min_frames = min_frames
         self.writers = {}
+        if remove_existing:
+            self.remove_track_videos()
+
+    def remove_track_videos(self):
+        for f in glob.glob(f'{self.out_dir}track_*.mp4'):
+            print(f"Deleting existing track video {f}")
+            os.remove(f)
 
     def __enter__(self):
         return self
@@ -100,7 +118,7 @@ class TrackSink:
             return self.writers[tid]
         fname = f'{self.out_dir}/track_{tid}.mp4' #self.out_format.format(tid)
         os.makedirs(os.path.dirname(fname) or '.', exist_ok=True)
-        self.writers[tid] = w = sv.VideoSink(fname, self.video_info)
+        self.writers[tid] = w = VideoSink(fname, self.video_info)
         w.__enter__()
         w.count = 0
         w.track_id = tid
@@ -137,7 +155,7 @@ def resize_with_pad(image, new_shape):
     if not all(original_shape):
         return np.zeros(new_shape, dtype=np.uint8)
     ratio = float(max(new_shape))/max(original_shape)
-    new_size = tuple([int(x*ratio) for x in original_shape])
+    new_size = tuple([max(int(x*ratio), 1) for x in original_shape])
     image = cv2.resize(image, new_size)
     delta_w = new_shape[0] - new_size[0]
     delta_h = new_shape[1] - new_size[1]
@@ -217,3 +235,19 @@ def tracks_to_sv(pred_mask, label_counts, track_ids, labels):
         for i in track_detections.tracker_id
     ]
     return track_detections, labels
+
+
+
+def backup_path(path, **kw):
+    if os.path.exists(path):
+        p2 = next_path(path, **kw)
+        print(f"Moving {path} to {p2}")
+        os.rename(path, p2)
+    return path
+
+def next_path(path, sep='_'):
+    path_pattern = '{}{sep}{{}}{}'.format(*os.path.splitext(path), sep=sep)
+    i = 1
+    while os.path.exists(path_pattern.format(i)):
+        i += 1
+    return path_pattern.format(i)

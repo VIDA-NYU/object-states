@@ -10,6 +10,7 @@ import supervision as sv
 
 import torchvision.transforms as T
 
+from . import _patch
 from .config import get_cfg
 from .util.video import crop_box, iter_video
 from .util.format_convert import fo_to_sv
@@ -134,18 +135,18 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
 
             # --------------------------- Get Detic embeddings --------------------------- #
             
-            if skip_every and i % (skip_every*3): continue
+            # if skip_every and i % (skip_every*3): continue
 
-            instances = detic(frame, boxes=[torch.as_tensor(detections.xyxy, device='cuda')])
-            z_detic = instances.stage_features.cpu().numpy()  # n, 3, 512
+            # instances = detic(frame, boxes=[torch.as_tensor(detections.xyxy, device='cuda')])
+            # z_detic = instances.stage_features.cpu().numpy()  # n, 3, 512
 
-            for track_id, z in zip(detections.tracker_id, z_detic):
-                embeddings[track_id]['detic']['z'].append(z.mean(0))
-                embeddings[track_id]['detic']['frame_index'].append(i)
+            # for track_id, z in zip(detections.tracker_id, z_detic):
+            #     embeddings[track_id]['detic']['z'].append(z.mean(0))
+            #     embeddings[track_id]['detic']['frame_index'].append(i)
 
-                for stage in range(z.shape[0]):
-                    embeddings[track_id][f'detic_s{stage}']['z'].append(z[stage])
-                    embeddings[track_id][f'detic_s{stage}']['frame_index'].append(i)
+            #     for stage in range(z.shape[0]):
+            #         embeddings[track_id][f'detic_s{stage}']['z'].append(z[stage])
+            #         embeddings[track_id][f'detic_s{stage}']['frame_index'].append(i)
 
         # ------------------------- Write embeddings to file ------------------------- #
 

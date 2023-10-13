@@ -1,0 +1,6 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/xmem_eval_w700
+
+XMEM:
+  FRAME_SIZE: 700

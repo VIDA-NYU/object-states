@@ -2,7 +2,15 @@ _BASE_: base.yaml
 DATASET:
   ROOT: /datasets/ptgrecipes_eval
   VIDEO_PATTERN: /datasets/ptgrecipes_eval/data/*.mp4
+  # STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
+  # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
+  STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
+  META_CSV: /datasets/PTG Object State Labels - Metadata.csv
 
 EVAL:
-  TRAIN_CSV: config/train.txt
-  VAL_CSV: config/val.txt
+  USE_AUGMENTATIONS: True
+  TRAIN_CSV: config/train_static.txt
+  VAL_CSV: config/val_mit.txt
+  VAL_CSVS: 
+   - config/val_mit.txt
+   - config/val_nyu.txt

@@ -1,0 +1,11 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/xmem_eval_quesadilla_pancake
+
+DATA:
+  # https://github.com/KaihuaTang/LVIS-for-mmdetection/blob/master/LVIS_utils.py
+  VOCAB: 
+    - quesadilla pancake: tortilla
+    - bowl
+    - microwave_oven
+    - plate

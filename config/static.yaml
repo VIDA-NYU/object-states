@@ -1,0 +1,29 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/static_eval
+  VIDEO_PATTERN: /datasets/Bridget_videos/*
+
+XMEM:
+  FRAME_SIZE: 280
+  CONFIG:
+    # top_k: 15
+    # mem_every: 30
+    # deep_update_every: -1
+    # enable_long_term: True
+    # enable_long_term_count_usage: True
+    # num_prototypes: 64
+    # min_mid_term_frames: 6
+    # max_mid_term_frames: 12
+    # max_long_term_elements: 1000
+    # tentative_frames: 4
+    # tentative_age: 3
+    # max_age: 60  # in steps
+    min_iou: 0.4
+
+DATA:
+  # https://github.com/KaihuaTang/LVIS-for-mmdetection/blob/master/LVIS_utils.py
+  VOCAB: 
+    - tortilla pizza plain circular paper_plate quesadilla pancake: tortilla
+    # - plastic bag
+    # - plate
+  UNTRACKED_VOCAB: []
