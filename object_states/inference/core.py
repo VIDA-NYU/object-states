@@ -22,6 +22,8 @@ from torchvision.ops import masks_to_boxes
 from ..util.nms import asymmetric_nms, mask_iou
 from ..util.vocab import prepare_vocab
 
+from IPython import embed
+
 log = logging.getLogger(__name__)
 
 # ray.init()
@@ -125,8 +127,10 @@ class ObjectDetector:
         instances = instances[~np.isin(instances.pred_labels, self.ignored_vocabulary)]
         # filter out objects completely inside another object
         obj_priority = torch.from_numpy(np.isin(instances.pred_labels, self.tracked_vocabulary)).int()
-        filtered, overlap = asymmetric_nms(instances.pred_boxes.tensor, instances.scores, obj_priority, iou_threshold=0.96)
+        filtered, overlap = asymmetric_nms(instances.pred_boxes.tensor, instances.scores, obj_priority, iou_threshold=0.85)
         filtered_instances = instances[filtered.cpu().numpy()]
+        # if Counter(instances.pred_labels.tolist()).get('tortilla', 0) > 1:
+        #     embed()
         for i, i_ov in enumerate(overlap):
             if not len(i_ov): continue
             # get overlapping instances
@@ -140,7 +144,7 @@ class ObjectDetector:
                 filtered_instances.pred_masks[i] |= torch.maximum(
                     filtered_instances.pred_masks[i], 
                     overlap_insts.pred_masks.max(0).values)
-        return instances
+        return filtered_instances
 
     def predict_hoi(self, image):
         # -------------------------- Hand-Object Interaction ------------------------- #
@@ -253,7 +257,7 @@ class ObjectDetector:
         for i in range(len(detections)):
             pred_label = detections.pred_labels[i]
             if has_state[i]:
-                df = self.obj_state_tables[pred_label].search(Z_imgs[i_z[i]].cpu().numpy()).limit(30).to_df()
+                df = self.obj_state_tables[pred_label].search(Z_imgs[i_z[i]].cpu().numpy()).limit(11).to_df()
                 state = df[self.state_db_key].value_counts()
                 state = state / state.sum()
             else:
@@ -264,12 +268,20 @@ class ObjectDetector:
         return detections
 
     def _encode_boxes(self, img, boxes):
+        # BGR
         # encode each bounding box crop with clip
-        print(f"Clip encoding: {img.shape} {boxes.shape}")
+        # print(f"Clip encoding: {img.shape} {boxes.shape}")
+        # for x, y, x2, y2 in boxes.cpu():
+        #     Image.fromarray(img[
+        #         int(y):max(int(np.ceil(y2)), int(y+2)),
+        #         int(x):max(int(np.ceil(x2)), int(x+2)),
+        #         ::-1]).save("box.png")
+        #     input()
         Z = self.clip.encode_image(torch.stack([
             self.clip_pre(Image.fromarray(img[
                 int(y):max(int(np.ceil(y2)), int(y+2)),
-                int(x):max(int(np.ceil(x2)), int(x+2))]))
+                int(x):max(int(np.ceil(x2)), int(x+2)),
+                ::-1]))
             for x, y, x2, y2 in boxes.cpu()
         ]).to(self.device))
         Z /= Z.norm(dim=1, keepdim=True)
