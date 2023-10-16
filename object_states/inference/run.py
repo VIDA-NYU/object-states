@@ -117,7 +117,7 @@ def run(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, s
                 # if hasattr(track_detections, 'pred_states'):
                 labels = pd.Series([
                     row.idxmax() if len(row.dropna()) else ""
-                    for i, row in track_detections.pred_states.iterrows()
+                    for i, row in pd.DataFrame(list(track_detections.pred_states)).iterrows()
                 ])
                 print(labels)
                 keep = ~pd.isna(labels)

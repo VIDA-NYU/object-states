@@ -21,6 +21,7 @@ from torchvision.ops import masks_to_boxes
 
 from ..util.nms import asymmetric_nms, mask_iou
 from ..util.vocab import prepare_vocab
+from .download import ensure_db
 
 from IPython import embed
 
@@ -98,6 +99,7 @@ class ObjectDetector:
         self.state_db_key = 'super_simple_state'
         self.obj_label_names = []
         if state_db_fname:
+            state_db_fname = ensure_db(state_db_fname)
             self.obj_state_db = lancedb.connect(state_db_fname)
             self.obj_label_names = self.obj_state_db.table_names()
             self.obj_state_tables = {
@@ -262,9 +264,9 @@ class ObjectDetector:
                 state = state / state.sum()
             else:
                 state = pd.Series()
-            states.append(state)
+            states.append(state.to_dict())
         # detections.__dict__['pred_states'] = states
-        detections.pred_states = pd.DataFrame(states)
+        detections.pred_states = np.array(states)
         return detections
 
     def _encode_boxes(self, img, boxes):
@@ -390,7 +392,7 @@ class Perception:
                 for ls, ss in zip(detections.topk_labels, detections.topk_scores.cpu().numpy())
             ]
 
-        states = detections.__dict__.get('pred_states')
+        states = detections.pred_states if detections.has('pred_states') else None
 
         output = []
         for i in range(len(detections)):
@@ -406,6 +408,9 @@ class Perception:
                 }
             if possible_labels:
                 data['possible_labels'] = possible_labels[i]
+
+            if states is not None:
+                data['state'] = states[i]
 
             if track_ids is not None:
                 data['segment_track_id'] = track_ids[i]
