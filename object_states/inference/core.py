@@ -4,6 +4,7 @@
 import logging
 from collections import Counter
 
+import cv2
 import numpy as np
 import pandas as pd
 import torch
@@ -32,6 +33,7 @@ log = logging.getLogger(__name__)
 class CustomTrack(XMem.Track):
     hoi_class_id = 0
     state_class_label = ''
+    confidence = 0
     def __init__(self, track_id, t_obs, n_init=3, **kw):
         super().__init__(track_id, t_obs, n_init, **kw)
         self.label_count = Counter()
@@ -249,12 +251,17 @@ class ObjectDetector:
         # update label counts
         tracks = self.xmem.tracks
         if input_track_ids is not None and detections is not None:
-            for (ti, label) in zip(input_track_ids, detections.pred_labels):
+            labels = detections.pred_labels
+            scores = detections.scores
+            for i, ti in enumerate(input_track_ids):
                 if ti >= 0:
-                    tracks[ti].label_count.update([label])
+                    tracks[ti].label_count.update([labels[i]])
+                    tracks[ti].confidence = scores[i]
+                    
 
         instances = Instances(
             image.shape,
+            scores=torch.Tensor([tracks[i].confidence for i in track_ids]),
             pred_boxes=Boxes(masks_to_boxes(pred_mask)),
             pred_masks=pred_mask,
             pred_labels=np.array([tracks[i].label_count.most_common(1)[0][0] for i in track_ids]),
@@ -386,7 +393,7 @@ class Perception:
         return track_detections, frame_detections, hoi_detections
 
 
-    def serialize_detections(self, detections, frame_shape):
+    def serialize_detections(self, detections, frame_shape, include_mask=False):
         bboxes = detections.pred_boxes.tensor.cpu().numpy()
         bboxes[:, 0] /= frame_shape[1]
         bboxes[:, 1] /= frame_shape[0]
@@ -394,6 +401,8 @@ class Perception:
         bboxes[:, 3] /= frame_shape[0]
         labels = detections.pred_labels
         track_ids = detections.track_ids.cpu().numpy() if detections.has('track_ids') else None
+
+        scores = detections.scores.cpu().numpy() if detections.has('scores') else None
 
         hand_object = { k: f'{k}_hand_interaction' for k in ['left', 'right', 'both'] }
         hand_object = {
@@ -408,6 +417,13 @@ class Perception:
                 for ls, ss in zip(detections.topk_labels, detections.topk_scores.cpu().numpy())
             ]
 
+        segments = None
+        if include_mask and detections.has('pred_masks'):
+            segments = [
+                cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                for mask in detections.pred_masks.cpu().numpy().astype(np.uint8)
+            ]
+
         states = detections.pred_states if detections.has('pred_states') else None
 
         output = []
@@ -416,19 +432,25 @@ class Perception:
                 'xyxyn': bboxes[i],
                 'label': labels[i],
             }
+
+            if scores is not None:
+                data['confidence'] = scores[i]
+
             if hand_object:
-                ho = {k: x[i] for k, x in hand_object.items()}
-                data['hand_object'] = {
-                    **ho,
-                    'any': max(ho.values(), default=0),
-                }
+                data['hand_object'] = {k: x[i] for k, x in hand_object.items()}
+                data['hand_object_interaction'] = max(ho.values(), default=0)
+
             if possible_labels:
                 data['possible_labels'] = possible_labels[i]
+
+            if segments:
+                data['segment'] = segments[i]
 
             if states is not None:
                 data['state'] = states[i]
 
             if track_ids is not None:
                 data['segment_track_id'] = track_ids[i]
+
             output.append(data)
         return output
