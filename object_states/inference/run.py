@@ -146,9 +146,9 @@ def run(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, s
                 # write out frame predictions
                 frame_data = []
                 if frame_detections is not None:
-                    frame_data += model.serialize_detections(frame_detections)
+                    frame_data += model.serialize_detections(frame_detections, frame.shape)
                 if hoi_detections is not None:
-                    frame_data += model.serialize_detections(hoi_detections)
+                    frame_data += model.serialize_detections(hoi_detections, frame.shape)
                 if frame_data:
                     output_json_files['frame'][1].append({ **meta, 'objects': frame_data })
     finally:

@@ -13,7 +13,6 @@ import lancedb
 import clip
 from detic import Detic
 from detic.inference import load_classifier
-from egohos import EgoHos
 from xmem import XMem
 
 from detectron2.structures import Boxes, Instances, pairwise_iou
@@ -41,15 +40,26 @@ class CustomTrack(XMem.Track):
 # IGNORE_CLASSES = ['table', 'dining_table', 'table-tennis_table', 'person']
 
 class ObjectDetector:
-    def __init__(self, vocabulary, state_db_fname=None, xmem_config={}, conf_threshold=0.5, device='cuda'):
+    def __init__(
+        self, vocabulary, state_db_fname=None, xmem_config={}, conf_threshold=0.5, 
+        device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None):
         # initialize models
         self.device = device
-        self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold).eval()
+        self.detic_device = detic_device or device
+        self.egohos_device = egohos_device or device
+        self.xmem_device = xmem_device or device
+        self.clip_device = clip_device or device
+        self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval()
         self.conf_threshold = conf_threshold
 
-        self.egohos = EgoHos('obj1').eval()
-        self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
-        self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
+        try:
+            from egohos import EgoHos
+            self.egohos = EgoHos('obj1', device=self.egohos_device).eval()
+            self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
+            self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
+        except ImportError e:
+            print('Could not import EgoHOS:', e)
+            self.egohos = None
 
         self.xmem = XMem({
             'top_k': 30,
@@ -66,7 +76,7 @@ class ObjectDetector:
             'max_age': 60,  # in steps
             # 'min_iou': 0.3,
             **xmem_config,
-        }, Track=CustomTrack).cuda().eval()
+        }, Track=CustomTrack).to(self.xmem_device).eval()
 
         # load vocabularies
         if vocabulary.get('base'):
@@ -111,7 +121,7 @@ class ObjectDetector:
             # for name in self.obj_label_names:
             #     tbl.create_index(num_partitions=256, num_sub_vectors=96)
         # image encoder
-        self.clip, self.clip_pre = clip.load("ViT-B/32", device=self.device)
+        self.clip, self.clip_pre = clip.load("ViT-B/32", device=self.clip_device)
 
 
 
@@ -149,6 +159,8 @@ class ObjectDetector:
         return filtered_instances
 
     def predict_hoi(self, image):
+        if self.egohos is None:
+            return None, None
         # -------------------------- Hand-Object Interaction ------------------------- #
 
         # predict HOI
@@ -363,7 +375,7 @@ class Perception:
         # ----- Merge our multi-model detections into a single set of detections ----- #
         # IoU between tracks+frames & hoi:
 
-        if is_detection_frame:
+        if hoi_detections is not None:
             # Merging HOI into track_detections, frame_detections, hoi_detections
             hoi_detections = self.detector.merge_hoi(
                 [track_detections, frame_detections],
@@ -374,8 +386,12 @@ class Perception:
         return track_detections, frame_detections, hoi_detections
 
 
-    def serialize_detections(self, detections):
+    def serialize_detections(self, detections, frame_shape):
         bboxes = detections.pred_boxes.tensor.cpu().numpy()
+        bboxes[:, 0] /= frame_shape[1]
+        bboxes[:, 1] /= frame_shape[0]
+        bboxes[:, 2] /= frame_shape[1]
+        bboxes[:, 3] /= frame_shape[0]
         labels = detections.pred_labels
         track_ids = detections.track_ids.cpu().numpy() if detections.has('track_ids') else None
 
