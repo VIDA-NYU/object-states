@@ -57,7 +57,7 @@ class ObjectDetector:
             self.egohos = EgoHos('obj1', device=self.egohos_device).eval()
             self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
             self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
-        except ImportError e:
+        except ImportError as e:
             print('Could not import EgoHOS:', e)
             self.egohos = None
 
