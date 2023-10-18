@@ -420,7 +420,7 @@ class Perception:
         segments = None
         if include_mask and detections.has('pred_masks'):
             segments = [
-                cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                norm_contours(cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0], frame_shape)
                 for mask in detections.pred_masks.cpu().numpy().astype(np.uint8)
             ]
 
@@ -454,3 +454,11 @@ class Perception:
 
             output.append(data)
         return output
+
+
+def norm_contours(contours, shape):
+    contours = list(contours)
+    WH = np.array(shape[:2][::-1])
+    for i in range(len(contours)):
+        contours[i] = np.asarray(contours[i]) / WH
+    return contours
