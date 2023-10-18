@@ -29,6 +29,11 @@ def load_data(cfg, data_file_pattern, include=None):
     
     
     '''
+    if os.path.isfile('dataset.pkl'):
+        print('reading pickle')
+        df = pd.read_pickle('dataset.pkl')
+        print(df.head())
+        return df
     use_aug = cfg.EVAL.USE_AUGMENTATIONS
 
     embeddings_list, df_list = [], []
@@ -39,6 +44,9 @@ def load_data(cfg, data_file_pattern, include=None):
     dfs = load_object_annotations(cfg)
 
     fs = glob.glob(data_file_pattern)
+    if cfg.EVAL.TRAIN_BASE_ROOT:
+        fs += glob.glob(f'{cfg.EVAL.TRAIN_BASE_ROOT}/embeddings/{cfg.EVAL.DETECTION_NAME}/*/clip/*.npz')
+
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
         if include and not any(fi in f for fi in include):
@@ -93,18 +101,23 @@ def load_data(cfg, data_file_pattern, include=None):
     X = np.concatenate(embeddings_list)
     df = pd.concat(df_list)
     df['vector'] = list(X)
+
+    df.to_pickle('dataset.pkl')
     return df
 
 
-def load_data_from_db(cfg, emb_type='clip'):
-    db_fname = os.path.join(cfg.DATASET.ROOT, f'{emb_type}.lancedb')
-
+def load_data_from_db(cfg, state_col, emb_type='clip'):
     import lancedb
-    db = lancedb.connect(db_fname)
-    df = pd.concat([
-        db.open_table(object_name).to_pandas()
-        for object_name in tqdm.tqdm(db.table_names())
-    ])
+    dfs = []
+    for db_fname in cfg.EVAL.EMBEDDING_DBS or [os.path.join(cfg.DATASET.ROOT, f'{emb_type}.lancedb')]:
+        print(db_fname)
+        assert os.path.isdir(db_fname)
+        db = lancedb.connect(db_fname)
+        for object_name in tqdm.tqdm(db.table_names()):
+            dfs.append(db.open_table(object_name).to_pandas())
+    df = pd.concat(dfs) if dfs else pd.DataFrame({state_col: []})
+    if state_col:
+        df['state'] = df[state_col]
     return df
 
 
@@ -128,6 +141,8 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
     X_train, X_test = X[i_train], X[i_test]
     y_train, y_test = y[i_train], y[i_test]
 
+    assert not (set(video_ids[i_train]) & set(video_ids[i_test])), "Being extra sure... this is a nono"
+
     # Standardize features
     scaler = StandardScaler()
     X_train = scaler.fit_transform(X_train)
@@ -146,38 +161,39 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
 
     # Generate plots
 
-    video_ids_test = video_ids[i_test]
-    emission_plot(plot_dir, y_emis, y_test, model.classes_, f'{run_name}_', video_ids=video_ids_test)
-    emission_plot(plot_dir, y_emis, y_test, model.classes_, f'{run_name}_ypred_', show_ypred=True, video_ids=video_ids_test)
-    for winsize in [2, 4, 8, 16]:
-        y_ = moving_average(y_emis, winsize)
-        emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ma{winsize}_', video_ids=video_ids_test)
-        emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ma{winsize}_ypred_', show_ypred=True, video_ids=video_ids_test)
-
-    y_hmm = hmm_forward(y_emis, len(model.classes_))
-    emission_plot(plot_dir, y_hmm, y_test, model.classes_, f'{run_name}_trans_', video_ids=video_ids_test)
-    emission_plot(plot_dir, y_hmm, y_test, model.classes_, f'{run_name}_trans_ypred_', show_ypred=True, video_ids=video_ids_test)
-    # embed()
-    
-    cm_plot(plot_dir, y_test, y_pred, model.classes_, f'{run_name}_')
-
-    # ---------------------------------- Metrics --------------------------------- #
-
-    # Compile metrics
     all_metrics = []
+
+    # compute vanilla metrics
     meta['run_name'] = run_name
     metrics = get_metrics(y_test, y_pred, **meta)
     all_metrics.append(metrics)
     tqdm.tqdm.write(f'Accuracy for {run_name}: {metrics["accuracy"]:.2f}')
 
+    # generate vanilla plots
+    video_ids_test = video_ids[i_test]
+    emission_plot(plot_dir, y_emis, y_test, model.classes_, f'{run_name}_ma0_', video_ids=video_ids_test)
+    emission_plot(plot_dir, y_emis, y_test, model.classes_, f'{run_name}_ma0_ypred_', show_ypred=True, video_ids=video_ids_test)
+    cm_plot(plot_dir, y_test, y_pred, model.classes_, f'{run_name}_')
+
+    # with moving average
     for winsize in [2, 4, 8, 16]:
         y_ = moving_average(y_emis, winsize)
-        y_pred_i = np.array(model.classes_)[np.argmax(y_, axis=1)]
+        y_pred_ = np.asarray(model.classes_)[np.argmax(y_, axis=1)]
+        # emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ma{winsize}_', video_ids=video_ids_test)
+        emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ma{winsize}_ypred_', show_ypred=True, video_ids=video_ids_test)
+        cm_plot(plot_dir, y_test, y_pred_, model.classes_, f'{run_name}_cm_ma{winsize}_')
+
         meta['run_name'] = f'{run_name}_movingavg-{winsize}'
         meta['moving_average'] = winsize
-        metrics = get_metrics(y_test, y_pred_i, **meta)
+        metrics = get_metrics(y_test, y_pred_, **meta)
         all_metrics.append(metrics)
 
+    # y_hmm = hmm_forward(y_emis, len(model.classes_))
+    # emission_plot(plot_dir, y_hmm, y_test, model.classes_, f'{run_name}_trans_', video_ids=video_ids_test)
+    # emission_plot(plot_dir, y_hmm, y_test, model.classes_, f'{run_name}_trans_ypred_', show_ypred=True, video_ids=video_ids_test)
+    # # embed()
+    
+    # get per class metrics
     per_class_metrics = []
     for c in np.unique(y):
         per_class_metrics.append(get_metrics(
@@ -237,8 +253,9 @@ def emission_plot(plot_dir, X, y, classes, prefix='', video_ids=None, show_ypred
     ic = range(len(classes))
     plt.yticks(ic, [classes[i] for i in ic])
     pltsave(f'{plot_dir}/{prefix}emissions.png')
+    os.makedirs(f'{plot_dir}/npzs', exist_ok=True)
     np.savez(
-        f'{plot_dir}/{prefix}emissions.npz', 
+        f'{plot_dir}/npzs/{prefix}emissions.npz', 
         predictions=X, ground_truth=y, 
         video_ids=video_ids, classes=classes)
 
@@ -355,21 +372,24 @@ def run(config_name):
     os.makedirs('plots', exist_ok=True)
 
     # emb_dir = cfg.DATASET.EMBEDDING_DIR
-    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings1', cfg.EVAL.DETECTION_NAME)
+    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
     emb_types = cfg.EVAL.EMBEDDING_TYPES
 
     STATE = 'state'
 
     train_split = read_split_file(cfg.EVAL.TRAIN_CSV)
+    train_base_split = read_split_file(cfg.EVAL.TRAIN_BASE_CSV)
     val_splits = [(f, read_split_file(f)) for f in cfg.EVAL.VAL_CSVS]
+    print(train_base_split)
     print(train_split)
     print(val_splits)
 
-    full_split = train_split + [x for f, xs in val_splits for x in xs]
+    full_train_split = train_split + train_base_split
+    full_split =full_train_split + [x for f, xs in val_splits for x in xs]
     print(full_split)
 
     for _,val_split in val_splits:
-        assert not set(train_split) & set(val_split), f"what are you doing silly {set(train_split) & set(val_split)}"
+        assert not set(full_train_split) & set(val_split), f"what are you doing silly {set(full_train_split) & set(val_split)}"
 
     all_metrics = []
     all_per_class_metrics = []
@@ -386,9 +406,13 @@ def run(config_name):
     for emb_type in tqdm.tqdm(emb_types, desc='embedding type'):
         data_file_pattern = f'{emb_dir}/*/{emb_type}/*.npz'
 
-        ydf = load_data(cfg, data_file_pattern, include=full_split)
-        # ydf = load_data_from_db(cfg)
+        ydf1 = load_data(cfg, data_file_pattern, include=full_split)
+        ydf2 = load_data_from_db(cfg, state_col='full_state')
+        assert None not in set(ydf2.state)
+        ydf = pd.concat([ydf1, ydf2])
+        assert None not in set(ydfw.state)
         emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['object'].values, 'object')
+        emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['state'].values, 'states')
 
         for (val_split_fname, val_split) in val_splits:
             val_split_name = val_split_fname.split('/')[-1].removesuffix('.txt')
@@ -397,10 +421,18 @@ def run(config_name):
                 X = np.array(list(odf['vector'].values))
                 y = odf[STATE].values
                 video_ids = odf['video_id'].values
+                unique_video_ids = np.unique(video_ids)
 
+                obj_train_base_split = [f for f in train_base_split if f in video_ids]
                 obj_train_split = [f for f in train_split if f in video_ids]
                 obj_val_split = [f for f in val_split if f in video_ids]
                 # obj_train_split = sorted(obj_train_split, key=lambda v: -len(odf[odf.video_id == v].state.unique()))
+
+                print("Base Training split:", obj_train_base_split)
+                print("Training split:", obj_train_split)
+                print("Validation split:", obj_val_split)
+                print("Unused videos:", set(unique_video_ids) - set(obj_train_base_split+obj_train_split+obj_val_split))
+                print("Missing videos:", set(obj_train_base_split+obj_train_split+obj_val_split) - set(unique_video_ids))
 
                 print()
                 print("all data:")
@@ -420,17 +452,16 @@ def run(config_name):
                 # range(len(obj_train_split))
                 for nvids in tqdm.tqdm([8, len(obj_train_split)], desc='n videos'):
                     nvids += 1
-                    i_train = np.isin(video_ids, obj_train_split[:nvids])
+                    i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
                     i_val = np.isin(video_ids, obj_val_split)
 
-                    a=odf.iloc[i_train][['video_id', STATE]].value_counts()
-                    a.to_csv(f"{plot_dir}/train_stats_{nvids}vids.csv")
-                    print(a)
-                    a=odf.iloc[i_val][['video_id', STATE]].value_counts()
-                    a.to_csv(f"{plot_dir}/val_stats_{nvids}vids.csv")
-                    print(a)
-
-                    x = np.unique(y[i_train])
+                    # a=odf.iloc[i_train][['video_id', STATE]].value_counts()
+                    # a.to_csv(f"{plot_dir}/train_stats_{nvids}vids.csv")
+                    # print(a)
+                    # a=odf.iloc[i_val][['video_id', STATE]].value_counts()
+                    # a.to_csv(f"{plot_dir}/val_stats_{nvids}vids.csv")
+                    # print(a)
+                    # x = np.unique(y[i_train])
 
                     print(f"Training with {nvids}: train size: {len(i_train)} val size: {len(i_val)}")
 

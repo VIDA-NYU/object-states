@@ -19,6 +19,7 @@ __pycache__/
 *.db
 *.zip
 *.lprof
+*.pkl
 
 *.mp4
 

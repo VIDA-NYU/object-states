@@ -437,7 +437,7 @@ class Perception:
                 data['confidence'] = scores[i]
 
             if hand_object:
-                data['hand_object'] = {k: x[i] for k, x in hand_object.items()}
+                data['hand_object'] = ho = {k: x[i] for k, x in hand_object.items()}
                 data['hand_object_interaction'] = max(ho.values(), default=0)
 
             if possible_labels:

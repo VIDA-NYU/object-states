@@ -9,7 +9,12 @@ DATASET:
 
 EVAL:
   USE_AUGMENTATIONS: True
-  TRAIN_CSV: config/train_static.txt
+  EMBEDDING_DBS:
+   - /datasets/static_eval/clip_office_noaug.lancedb
+  #  - /datasets/states_eval/clip_
+  TRAIN_BASE_ROOT: /datasets/static_eval
+  TRAIN_BASE_CSV: config/train_static_base.txt
+  TRAIN_CSV: config/train.txt
   VAL_CSV: config/val_mit.txt
   VAL_CSVS: 
    - config/val_mit.txt

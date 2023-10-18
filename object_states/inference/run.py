@@ -12,62 +12,10 @@ from object_states.inference import util
 from object_states.util.video import DetectionAnnotator, XMemSink, backup_path
 from object_states.util.format_convert import detectron_to_sv
 from object_states.util.data_output import json_dump
+from .vocab import VOCAB
 
-# TODO 
-VOCAB = {
-    # 'base': 'lvis',
-    'tracked': [
-        # "tortilla",
-        'tortilla pizza plain circular paper_plate quesadilla pancake: tortilla',
-        # 'tortilla pizza plain circular paper_plate: tortilla',
-        "mug coffee tea: mug",
-        "bowl soup_bowl: bowl",
-        "microwave_oven",
-        "plate",
-
-    ],
-    'untracked': [
-        "tortilla plastic_bag packet ice_pack circular: tortilla_package",
-        'banana',
-        "banana mushroom: banana_slice",
-        'chopping_board clipboard place_mat tray: cutting_board',
-        'knife',
-        'jar bottle can: jar',
-        'jar_lid bottle_cap: jar_lid',
-        'toothpicks',
-        # 'floss',
-        'watch', 'glove', 'person',
-    ],
-    'equivalencies': {
-        # equivalencies
-        # 'can': 'bottle',
-        'beer_can': 'bottle',
-        'clipboard': 'chopping_board',
-        'place_mat': 'chopping_board',
-        'tray': 'chopping_board',
-        
-        # labels to ignore
-        'table-tennis_table': 'IGNORE', 
-        'table': 'IGNORE', 
-        'dining_table': 'IGNORE', 
-        'person': 'IGNORE',
-        'watch': 'IGNORE',
-        'glove': 'IGNORE',
-        'magnet': 'IGNORE',
-        'vent': 'IGNORE',
-        'crumb': 'IGNORE',
-        'nailfile': 'IGNORE',
-
-        # not sure
-        'handle': 'IGNORE',
-    }
-
-}
-
-import ipdb
-@ipdb.iex
 @torch.no_grad()
-def run(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, size=280, fps_down=1, out_dir='outputs', out_path=None):
+def run_one(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, size=280, fps_down=1, out_dir='outputs', out_path=None):
     if tracked_vocab is not None:
         vocab['tracked'] = tracked_vocab
     model = Perception(
@@ -140,7 +88,7 @@ def run(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, s
                 meta = { 'timestamp': timestamp, 'image_shape': frame.shape }
 
                 # write out track predictions
-                track_data = model.serialize_detections(track_detections)
+                track_data = model.serialize_detections(track_detections, frame.shape)
                 output_json_files['track'][1].append({ **meta, 'objects': track_data })
                 
                 # write out frame predictions
@@ -182,6 +130,12 @@ def get_video_info(src, size, fps_down=1, nrows=1, ncols=1, render_scale=1):
     print(f"size: {WH} {WH2} grid={ncols}x{nrows}  fps: {video_info.fps} ({fps_down or 1}x)")
     return video_info, WH, WH2
 
+
+import ipdb
+@ipdb.iex
+def run(*srcs, **kw):
+    for f in srcs:
+        run_one(f, **kw)
 
 def main(*a, profile=False, **kw):
     import sys
