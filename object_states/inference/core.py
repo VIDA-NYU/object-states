@@ -2,7 +2,7 @@
 # from ray import serve
 # from ray.serve.handle import DeploymentHandle
 import logging
-from collections import Counter
+from collections import Counter, defaultdict
 
 import cv2
 import numpy as np
@@ -37,7 +37,31 @@ class CustomTrack(XMem.Track):
     def __init__(self, track_id, t_obs, n_init=3, **kw):
         super().__init__(track_id, t_obs, n_init, **kw)
         self.label_count = Counter()
+        self.obj_state_dist = pd.Series()
+        self.obj_state_dist_label = None
         self.z_clips = {}
+
+    @property
+    def pred_label(self):
+        xs = self.label_count.most_common(1)
+        return xs[0][0] if xs else None
+
+    def update_state(self, state, pred_label, alpha=0.1):
+        # if the label changed, delete the state
+        if self.obj_state_dist_label != pred_label:
+            self.obj_state_dist = pd.Series()
+            self.obj_state_dist_label = pred_label
+
+        # set default
+        for k in state.index:
+            if k not in self.obj_state_dist:
+                self.obj_state_dist[k] = state[k]
+
+        # do EMA
+        for k in self.obj_state_dist.index:
+            self.obj_state_dist[k] = (1 - alpha) * self.obj_state_dist[k] + alpha * state.get(k, 0)
+        return self.obj_state_dist
+
 
 # IGNORE_CLASSES = ['table', 'dining_table', 'table-tennis_table', 'person']
 
@@ -107,6 +131,7 @@ class ObjectDetector:
         self.skill_clsf, _, _ = load_classifier(full_prompts, metadata_name='lvis+')
         self.skill_labels = np.asarray(full_vocab)
         self.skill_labels_is_tracked = np.isin(self.skill_labels, self.tracked_vocabulary)
+        self.state_ema = 0.1
 
         self.state_db_key = 'super_simple_state'
         self.obj_label_names = []
@@ -253,7 +278,7 @@ class ObjectDetector:
             scores=torch.Tensor([tracks[i].confidence for i in track_ids]),
             pred_boxes=Boxes(masks_to_boxes(pred_mask)),
             pred_masks=pred_mask,
-            pred_labels=np.array([tracks[i].label_count.most_common(1)[0][0] for i in track_ids]),
+            pred_labels=np.array([tracks[i].pred_label for i in track_ids]),
             track_ids=torch.as_tensor(track_ids),
         )
 
@@ -264,16 +289,21 @@ class ObjectDetector:
 
     def predict_state(self, image, detections):
         states = []
-        has_state = np.isin(detections.pred_labels, self.obj_label_names)
+
+        labels = detections.pred_labels
+        has_state = np.isin(labels, self.obj_label_names)
+        track_ids = detections.track_ids.cpu().numpy() if detections.has('track_ids') else None
         dets = detections[has_state]
         i_z = {k: i for i, k in enumerate(np.where(has_state)[0])}
         Z_imgs = self._encode_boxes(image, dets.pred_boxes.tensor) if len(dets) else None
         for i in range(len(detections)):
-            pred_label = detections.pred_labels[i]
+            pred_label = labels[i]
             if has_state[i]:
                 df = self.obj_state_tables[pred_label].search(Z_imgs[i_z[i]].cpu().numpy()).limit(11).to_df()
                 state = df[self.state_db_key].value_counts()
                 state = state / state.sum()
+                if track_ids is not None and track_ids[i] in self.xmem.tracks:
+                    state = self.xmem.tracks[track_ids[i]].update_state(state, pred_label, self.state_ema)
             else:
                 state = pd.Series()
             states.append(state.to_dict())
