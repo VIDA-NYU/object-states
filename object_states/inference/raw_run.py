@@ -8,7 +8,7 @@ from .vocab import VOCAB
 
 
 @torch.no_grad()
-def run_one(name, recording_dir, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5):
+def run_one(name, recording_dir, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, suffix=':v3'):
     if tracked_vocab is not None:
         vocab['tracked'] = tracked_vocab
     model = Perception(
@@ -46,7 +46,7 @@ def run_one(name, recording_dir, tracked_vocab=None, state_db=None, vocab=VOCAB,
                 'timestamp': timestamp,
             }
             for sid, d in outputs.items():
-                recorder.write(sid, ts, d)
+                recorder.write(f'{sid}{suffix}', ts, d)
 
 
 import ipdb
