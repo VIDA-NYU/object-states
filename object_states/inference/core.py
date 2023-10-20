@@ -224,21 +224,11 @@ class ObjectDetector:
     def track_objects(self, image, detections, negative_mask=None):
         # 
         det_mask = None
-        # other_mask = None
-        frame_detections = None
-        tracked_detections = None
-        # is_tracked = None
-        # mask_labels = None
         det_scores = None
         if detections is not None:
-            # mask_labels = detections.pred_labels
-            # is_tracked = np.isin(detections.pred_labels, self.tracked_vocabulary)
-            # tracked_detections = detections[is_tracked]
-            # frame_detections = detections[~is_tracked]
             # other_mask = frame_detections.pred_masks
             det_scores = detections.pred_scores
             det_mask = detections.pred_masks
-            frame_detections = detections
 
         # run xmem
         pred_mask, track_ids, input_track_ids = self.xmem(
@@ -257,7 +247,6 @@ class ObjectDetector:
                 if ti >= 0:
                     tracks[ti].label_count.update([labels[i]])
                     tracks[ti].confidence = scores[i]
-                    
 
         instances = Instances(
             image.shape,
@@ -267,6 +256,10 @@ class ObjectDetector:
             pred_labels=np.array([tracks[i].label_count.most_common(1)[0][0] for i in track_ids]),
             track_ids=torch.as_tensor(track_ids),
         )
+
+        frame_detections = None
+        if detections is not None:
+            frame_detections = detections[~np.isin(detections.pred_labels, self.tracked_vocabulary)]
         return instances, frame_detections
 
     def predict_state(self, image, detections):
