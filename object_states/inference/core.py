@@ -67,8 +67,13 @@ class CustomTrack(XMem.Track):
 
 class ObjectDetector:
     def __init__(
-        self, vocabulary, state_db_fname=None, xmem_config={}, conf_threshold=0.5, 
-        device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None):
+        self, 
+        vocabulary, 
+        state_db_fname=None, 
+        xmem_config={}, 
+        conf_threshold=0.3, 
+        device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None
+    ):
         # initialize models
         self.device = device
         self.detic_device = detic_device or device
