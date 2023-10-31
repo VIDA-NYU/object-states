@@ -8,6 +8,7 @@ import os
 DEFAULT_KEY = 'v0'
 FILE_IDS = {
     "v0": "10xIr2Wx07GqGm79VTAPh6NrYQgRlehGy",
+    "v1": "",
 }
 
 

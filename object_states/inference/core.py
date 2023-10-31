@@ -3,6 +3,7 @@
 # from ray.serve.handle import DeploymentHandle
 import logging
 from collections import Counter, defaultdict
+import pickle
 
 import cv2
 import numpy as np
@@ -18,6 +19,7 @@ from xmem import XMem
 
 from detectron2.structures import Boxes, Instances, pairwise_iou
 from torchvision.ops import masks_to_boxes
+from torchvision import transforms
 
 from ..util.nms import asymmetric_nms, mask_iou
 from ..util.vocab import prepare_vocab
@@ -29,6 +31,9 @@ log = logging.getLogger(__name__)
 
 # ray.init()
 
+IMAGENET_DEFAULT_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_DEFAULT_STD = (0.229, 0.224, 0.225)
+
 
 class CustomTrack(XMem.Track):
     hoi_class_id = 0
@@ -37,7 +42,7 @@ class CustomTrack(XMem.Track):
     def __init__(self, track_id, t_obs, n_init=3, **kw):
         super().__init__(track_id, t_obs, n_init, **kw)
         self.label_count = Counter()
-        self.obj_state_dist = pd.Series()
+        self.obj_state_dist = pd.Series(dtype=float)
         self.obj_state_dist_label = None
         self.z_clips = {}
 
@@ -49,7 +54,7 @@ class CustomTrack(XMem.Track):
     def update_state(self, state, pred_label, alpha=0.1):
         # if the label changed, delete the state
         if self.obj_state_dist_label != pred_label:
-            self.obj_state_dist = pd.Series()
+            self.obj_state_dist = pd.Series(dtype=float)
             self.obj_state_dist_label = pred_label
 
         # set default
@@ -71,7 +76,8 @@ class ObjectDetector:
         vocabulary, 
         state_db_fname=None, 
         xmem_config={}, 
-        conf_threshold=0.3, 
+        conf_threshold=0.5, 
+        detect_hoi=False,
         device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None
     ):
         # initialize models
@@ -80,17 +86,20 @@ class ObjectDetector:
         self.egohos_device = egohos_device or device
         self.xmem_device = xmem_device or device
         self.clip_device = clip_device or device
-        self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval()
+        self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
         self.conf_threshold = conf_threshold
 
-        try:
-            from egohos import EgoHos
-            self.egohos = EgoHos('obj1', device=self.egohos_device).eval()
-            self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
-            self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
-        except ImportError as e:
-            print('Could not import EgoHOS:', e)
-            self.egohos = None
+        self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
+        self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
+        self.egohos = None
+        if detect_hoi is not False:
+            try:
+                from egohos import EgoHos
+                self.egohos = EgoHos('obj1', device=self.egohos_device).eval()
+            except ImportError as e:
+                print('Could not import EgoHOS:', e)
+                if detic_hoi is True:
+                    raise
 
         self.xmem = XMem({
             'top_k': 30,
@@ -133,28 +142,51 @@ class ObjectDetector:
         self.tracked_vocabulary = np.asarray(list(set(tracked_vocab)))
         self.ignored_vocabulary = np.asarray(['IGNORE'])
 
-        self.skill_clsf, _, _ = load_classifier(full_prompts, metadata_name='lvis+')
+        self.skill_clsf, _, _ = load_classifier(full_prompts, metadata_name='lvis+', device=self.detic_device)
         self.skill_labels = np.asarray(full_vocab)
         self.skill_labels_is_tracked = np.isin(self.skill_labels, self.tracked_vocabulary)
-        self.state_ema = 0.1
+        self.state_ema = 0.25
 
+
+        self.state_clsf_type = None
         self.state_db_key = 'super_simple_state'
         self.obj_label_names = []
         if state_db_fname:
-            state_db_fname = ensure_db(state_db_fname)
-            self.obj_state_db = lancedb.connect(state_db_fname)
-            self.obj_label_names = self.obj_state_db.table_names()
-            self.obj_state_tables = {
-                k: self.obj_state_db[k]
-                for k in self.obj_label_names
-            }
-            print(f"State DB: {self.obj_state_db}")
-            print(f'Objects: {self.obj_label_names}')
-            # for name in self.obj_label_names:
-            #     tbl.create_index(num_partitions=256, num_sub_vectors=96)
-        # image encoder
-        self.clip, self.clip_pre = clip.load("ViT-B/32", device=self.clip_device)
+            if state_db_fname.endswith(".lancedb"):
+                self.state_clsf_type = 'lancedb'
+                # image encoder
+                self.clip, self.clip_pre = clip.load("ViT-B/32", device=self.clip_device)
 
+                state_db_fname = ensure_db(state_db_fname)
+                print("Using state db:", state_db_fname)
+                self.obj_state_db = lancedb.connect(state_db_fname)
+                self.obj_label_names = self.obj_state_db.table_names()
+                self.obj_state_tables = {
+                    k: self.obj_state_db[k]
+                    for k in self.obj_label_names
+                }
+                print(f"State DB: {self.obj_state_db}")
+                print(f'Objects: {self.obj_label_names}')
+                # for name in self.obj_label_names:
+                #     tbl.create_index(num_partitions=256, num_sub_vectors=96)
+
+            if state_db_fname.endswith('.pkl'):
+                self.state_clsf_type = 'dino'
+                self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').eval().to(self.clip_device)
+                self.dino_head, self.dino_classes = pickle.load(open(state_db_fname, 'rb'))
+
+                dino_object_classes = np.array([x.split('__')[0] for x in self.dino_classes])
+                self.dino_state_classes = np.array([x.split('__')[1] for x in self.dino_classes])
+                self.obj_label_names = np.unique(dino_object_classes)
+                self.dino_label_mask = {l: dino_object_classes == l for l in self.obj_label_names}
+
+                self.dino_pre = transforms.Compose([
+                    transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+                    transforms.CenterCrop(224),
+                    transforms.ToTensor(),
+                    transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
+                ])
+                print(f'Objects: {self.obj_label_names}')
 
 
     def predict_objects(self, image):
@@ -162,7 +194,7 @@ class ObjectDetector:
 
         # predict objects
         detic_query = self.detic.build_query(image)
-        outputs = detic_query.detect(self.skill_clsf, conf_threshold=self.conf_threshold, labels=self.skill_labels)
+        outputs = detic_query.detect(self.skill_clsf, conf_threshold=0.3, labels=self.skill_labels)
         instances = outputs['instances']
         instances = self._filter_detections(instances)
         return instances, detic_query
@@ -211,6 +243,8 @@ class ObjectDetector:
         return instances, hand_mask
 
     def merge_hoi(self, other_detections, hoi_detections, detic_query):
+        if hoi_detections is None:
+            return None
         is_obj_type = self.egohos_type[hoi_detections.pred_hoi_classes] == 'obj'
         hoi_obj_detections = hoi_detections[is_obj_type]
         hoi_obj_masks = hoi_obj_detections.pred_masks
@@ -222,7 +256,7 @@ class ObjectDetector:
 
         # get mask iou
         other_detections = [d for d in other_detections if d is not None]
-        mask_list = [d.pred_masks for d in other_detections]
+        mask_list = [d.pred_masks.to(self.egohos_device) for d in other_detections]
         det_masks = torch.cat(mask_list) if mask_list else torch.zeros(0, hoi_obj_masks.shape[1:])
         iou = mask_iou(det_masks, hoi_obj_masks)
         # add hand side interaction to tracks
@@ -238,9 +272,17 @@ class ObjectDetector:
         # get hoi objects with poor overlap
         hoi_is_its_own_obj = iou.sum(0) < 0.3
         # get labels for HOIs
-        hoi_outputs = detic_query.predict(hoi_obj_boxes[hoi_is_its_own_obj], self.skill_clsf, labels=self.skill_labels)
+        hoi_outputs = detic_query.predict(
+            hoi_obj_boxes[hoi_is_its_own_obj].to(self.detic_device), 
+            self.skill_clsf, labels=self.skill_labels)
+
         hoi_detections2 = hoi_outputs['instances']
-        hoi_detections2.pred_masks = hoi_obj_detections.pred_masks[hoi_is_its_own_obj]
+        pm = hoi_obj_detections.pred_masks[hoi_is_its_own_obj]
+        # if len(hoi_detections2) != len(pm):
+        #     print(len(hoi_detections2))
+        #     print(hoi_is_its_own_obj)
+        #     print(pm.shape)
+        hoi_detections2.pred_masks = pm
         hoi_is_its_own_obj = hoi_is_its_own_obj.cpu()
         hoi_detections2.left_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'left')[hoi_is_its_own_obj]
         hoi_detections2.right_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'right')[hoi_is_its_own_obj]
@@ -258,7 +300,9 @@ class ObjectDetector:
         if detections is not None:
             # other_mask = frame_detections.pred_masks
             det_scores = detections.pred_scores
-            det_mask = detections.pred_masks
+            det_mask = detections.pred_masks.to(self.xmem_device)
+        if negative_mask is not None:
+            negative_mask = negative_mask.to(self.xmem_device)
 
         # run xmem
         pred_mask, track_ids, input_track_ids = self.xmem(
@@ -292,7 +336,7 @@ class ObjectDetector:
             frame_detections = detections[~np.isin(detections.pred_labels, self.tracked_vocabulary)]
         return instances, frame_detections
 
-    def predict_state(self, image, detections):
+    def predict_state(self, image, detections, det_shape=None):
         states = []
 
         labels = detections.pred_labels
@@ -300,23 +344,36 @@ class ObjectDetector:
         track_ids = detections.track_ids.cpu().numpy() if detections.has('track_ids') else None
         dets = detections[has_state]
         i_z = {k: i for i, k in enumerate(np.where(has_state)[0])}
-        Z_imgs = self._encode_boxes(image, dets.pred_boxes.tensor) if len(dets) else None
+        Z_imgs = self._encode_boxes(image, dets.pred_boxes.tensor, det_shape=det_shape) if len(dets) else None
         for i in range(len(detections)):
             pred_label = labels[i]
+            state = {}
+
             if has_state[i]:
-                df = self.obj_state_tables[pred_label].search(Z_imgs[i_z[i]].cpu().numpy()).limit(11).to_df()
-                state = df[self.state_db_key].value_counts()
-                state = state / state.sum()
-                if track_ids is not None and track_ids[i] in self.xmem.tracks:
-                    state = self.xmem.tracks[track_ids[i]].update_state(state, pred_label, self.state_ema)
-            else:
-                state = pd.Series()
-            states.append(state.to_dict())
+                if self.state_clsf_type == 'lancedb':
+                    z = Z_imgs[i_z[i]].cpu().numpy()
+                    df = self.obj_state_tables[pred_label].search(z).limit(11).to_df()
+                    state = df[self.state_db_key].value_counts()
+                    state = state / state.sum()
+                    if track_ids is not None and track_ids[i] in self.xmem.tracks:
+                        state = self.xmem.tracks[track_ids[i]].update_state(state, pred_label, self.state_ema)
+                    state = state.to_dict()
+                elif self.state_clsf_type == 'dino':
+                    y = Z_imgs[i_z[i]]#.cpu().numpy()
+                    assert y.shape[-1] == self.dino_state_classes.shape[0]
+                    label_mask = self.dino_label_mask[pred_label]
+                    state = dict(zip(
+                        self.dino_state_classes[label_mask].tolist(),
+                        y[label_mask].tolist()
+                    ))
+                    print(state)
+
+            states.append(state)
         # detections.__dict__['pred_states'] = states
         detections.pred_states = np.array(states)
         return detections
 
-    def _encode_boxes(self, img, boxes):
+    def _encode_boxes(self, img, boxes, det_shape=None):
         # BGR
         # encode each bounding box crop with clip
         # print(f"Clip encoding: {img.shape} {boxes.shape}")
@@ -326,14 +383,26 @@ class ObjectDetector:
         #         int(x):max(int(np.ceil(x2)), int(x+2)),
         #         ::-1]).save("box.png")
         #     input()
-        Z = self.clip.encode_image(torch.stack([
-            self.clip_pre(Image.fromarray(img[
-                int(y):max(int(np.ceil(y2)), int(y+2)),
-                int(x):max(int(np.ceil(x2)), int(x+2)),
-                ::-1]))
+        sx = sy = 1
+        if det_shape:
+            hd, wd = det_shape[:2]
+            hi, wi = img.shape[:2]
+            sx = wi / wd
+            sy = hi / hd
+        crops = [
+            Image.fromarray(img[
+                int(y * sy):max(int(np.ceil(y2 * sy)), int(y * sy + 2)),
+                int(x * sx):max(int(np.ceil(x2 * sx)), int(x * sx + 2)),
+                ::-1])
             for x, y, x2, y2 in boxes.cpu()
-        ]).to(self.device))
-        Z /= Z.norm(dim=1, keepdim=True)
+        ]
+
+        if self.state_clsf_type == 'lancedb':
+            Z = self.clip.encode_image(torch.stack([self.clip_pre(x) for x in crops]).to(self.clip_device))
+            Z /= Z.norm(dim=1, keepdim=True)
+        elif self.state_clsf_type == 'dino':
+            Z = self.dinov2(torch.stack([self.dino_pre(x) for x in crops]).to(self.clip_device))
+            Z = self.dino_head.predict_proba(np.ascontiguousarray(Z.cpu().numpy()))
         return Z
     
     def classify(self, Z, labels):
@@ -358,13 +427,22 @@ class ObjectDetector:
 
 
 class Perception:
-    def __init__(self, *a, detect_every_n_seconds=0.5, **kw):
+    def __init__(self, *a, detect_every_n_seconds=0.5, max_width=480, **kw):
         self.detector = ObjectDetector(*a, **kw)
         self.detect_every_n_seconds = detect_every_n_seconds
         self.detection_timestamp = -detect_every_n_seconds
+        self.max_width = max_width
 
     @torch.no_grad()
     def predict(self, image, timestamp):
+        # # Get a small version of the image
+        # h, w = image.shape[:2]
+        full_image = image
+        # W = self.max_width
+        # H = int((h * W / w)//16)*16
+        # # W = int((w * H / h)//16)*16
+        # image = cv2.resize(image, (W, H))
+
         # ---------------------------------------------------------------------------- #
         #                           Detection: every N frames                          #
         # ---------------------------------------------------------------------------- #
@@ -401,7 +479,7 @@ class Perception:
         # LanceDB:
 
         # predict state for tracked objects
-        track_detections = self.detector.predict_state(image, track_detections)
+        track_detections = self.detector.predict_state(full_image, track_detections, image.shape)
         # predict state for untracked objects
         # if frame_detections is not None:
         #     frame_detections = self.detector.predict_state(image, frame_detections)
