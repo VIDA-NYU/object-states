@@ -19,7 +19,8 @@ from .util.vocab import prepare_vocab
 
 from xmem import XMem
 from detic import Detic
-from detic.inference import asymmetric_nms, load_classifier
+from detic.inference import asymmetric_nms as detic_asymmetric_nms, load_classifier
+from object_states.util.nms import asymmetric_nms
 from egohos import EgoHos
 
 from IPython import embed
@@ -65,15 +66,16 @@ def main(config_fname, *files_to_predict, field=None, detect=None, stop_detect_a
     #         dataset_dir=dataset_dir,
     #         dataset_type=fo.types.FiftyOneVideoLabelsDataset,
     #     )
+    dataset_name = dataset_dir.split(os.sep)[-1]
     if not os.path.exists(f'{dataset_dir}/manifest.json'):
         log.info(f"Creating dataset from {video_pattern}")
-        dataset = fo.Dataset.from_videos_patt(video_pattern, name=dataset_dir.split(os.sep)[-1], overwrite=True)
+        dataset = fo.Dataset.from_videos_patt(video_pattern, name=dataset_name, overwrite=True)
     else:
         log.info(f"Loading existing dataset from {dataset_dir}")
         dataset = fo.Dataset.from_dir(
             dataset_dir=dataset_dir,
             dataset_type=fo.types.FiftyOneVideoLabelsDataset,
-            name=dataset_dir.split(os.sep)[-1],
+            name=dataset_name,
         )
         existing_paths = {os.path.basename(s.filepath) for s in dataset}
         for f in glob.glob(video_pattern):
@@ -270,7 +272,7 @@ def main(config_fname, *files_to_predict, field=None, detect=None, stop_detect_a
                 dataset_type=fo.types.FiftyOneVideoLabelsDataset,
                 label_field=f'frames.{track_field}',
             )
-        embed()
+        # embed()
 
 
 # ---------------------------------------------------------------------------- #
@@ -294,7 +296,7 @@ def do_egohos(model, frame):
     ])
 
 
-def do_detect(model, frame, iou_threshold=0.4):
+def do_detect(model, frame, track_labels=None, iou_threshold=0.85):
     labels = model.labels
     outputs = model(frame)
     # selected_indices, _ = asymmetric_nms(outputs['instances'].pred_boxes.tensor, outputs['instances'].scores)
@@ -304,21 +306,43 @@ def do_detect(model, frame, iou_threshold=0.4):
     # outputs['instances'] = outputs['instances'][selected_indices]
 
     instances = outputs['instances']
-    filtered, overlap = asymmetric_nms(instances.pred_boxes.tensor, instances.scores, iou_threshold=iou_threshold)
+    instances.pred_labels = labels[instances.pred_classes.int().cpu().numpy()]
+    # filtered, overlap = asymmetric_nms(instances.pred_boxes.tensor, instances.scores, iou_threshold=iou_threshold)
+    # filtered_instances = instances[filtered.cpu().numpy()]
+    # for i, i_ov in enumerate(overlap):
+    #     if not len(i_ov): continue
+    #     # get overlapping instances
+    #     overlap_insts = instances[i_ov.cpu().numpy()]
+    #     log.info(f"object {filtered_instances.pred_classes[i]} filtered {overlap_insts.pred_classes}")
+
+    #     # merge overlapping detections with the same label
+    #     overlap_insts = overlap_insts[overlap_insts.pred_classes == filtered_instances.pred_classes[i]]
+    #     if len(overlap_insts):
+    #         log.info(f"object {filtered_instances.pred_classes[i]} merged {len(overlap_insts)}")
+    #         filtered_instances.pred_masks[i] |= torch.maximum(
+    #             filtered_instances.pred_masks[i], 
+    #             overlap_insts.pred_masks.max(0).values)
+            
+
+
+    # filter out objects completely inside another object
+    obj_priority = torch.from_numpy(np.isin(instances.pred_labels, track_labels)).int() if track_labels is not None else None
+    filtered, overlap = asymmetric_nms(instances.pred_boxes.tensor, instances.scores, obj_priority, iou_threshold=iou_threshold)
     filtered_instances = instances[filtered.cpu().numpy()]
     for i, i_ov in enumerate(overlap):
         if not len(i_ov): continue
         # get overlapping instances
         overlap_insts = instances[i_ov.cpu().numpy()]
-        log.info(f"object {filtered_instances.pred_classes[i]} filtered {overlap_insts.pred_classes}")
+        log.info(f"object {filtered_instances.pred_labels[i]} filtered {overlap_insts.pred_labels}")
 
         # merge overlapping detections with the same label
-        overlap_insts = overlap_insts[overlap_insts.pred_classes == filtered_instances.pred_classes[i]]
+        overlap_insts = overlap_insts[overlap_insts.pred_labels == filtered_instances.pred_labels[i]]
         if len(overlap_insts):
-            log.info(f"object {filtered_instances.pred_classes[i]} merged {len(overlap_insts)}")
+            log.info(f"object {filtered_instances.pred_labels[i]} merged {len(overlap_insts)}")
             filtered_instances.pred_masks[i] |= torch.maximum(
                 filtered_instances.pred_masks[i], 
                 overlap_insts.pred_masks.max(0).values)
+    outputs['instances'] = filtered_instances
 
     log.debug(f"Detected: {labels[outputs['instances'].pred_classes.int().cpu().numpy()]}")
     return detectron_to_fo(outputs, labels, frame.shape)
@@ -333,22 +357,22 @@ def do_xmem(xmem, frame, gt, gt_hoi, track_labels=None, width=280):
 
     # ----------------------- Load detections from FiftyOne ---------------------- #
 
-    gt_mask, gt_labels, dets = get_masks_and_labels(gt, (wo,ho), (w, h), track_labels)
+    gt_mask, gt_labels, dets, neg_gt_mask = get_masks_and_labels(gt, (wo,ho), (w, h), track_labels, return_neg_mask=True)
     hoi_mask, _, _ = get_masks_and_labels(gt_hoi, (wo,ho), (w, h), ['hand(left)', 'hand(right)'])
+    neg_mask = None
     if hoi_mask is not None:
         hoi_mask = hoi_mask.sum(0)
-        # if input():embed()
-        if hoi_mask.float().sum() == 0:
-            hoi_mask = None
-        #     log.info(f"hand mask available and empty")
-        # else:
-        #     log.info(f"Using hand mask: {hoi_mask.shape}")
-    # else:
-    #     log.info("hand mask is empty")
+        if hoi_mask.float().sum() > 0:
+            neg_mask = hoi_mask
+    if neg_gt_mask is not None:
+        neg_gt_mask = neg_gt_mask.sum(0)
+        if neg_gt_mask.float().sum() > 0:
+            neg_mask = neg_gt_mask if neg_mask is None else neg_gt_mask | neg_mask
+    
 
     # ------------------------------- Track objects ------------------------------ #
 
-    pred_mask, track_ids, input_track_ids = xmem(frame, gt_mask, negative_mask=hoi_mask, only_confirmed=True)
+    pred_mask, track_ids, input_track_ids = xmem(frame, gt_mask, negative_mask=neg_mask, only_confirmed=True)
     boxes = masks_to_boxes(pred_mask)
     boxes = xyxy2xywhn(boxes, frame.shape).tolist()
     log.debug(f"Tracks: {track_ids} input tracks: {input_track_ids}")
@@ -376,12 +400,14 @@ def do_xmem(xmem, frame, gt, gt_hoi, track_labels=None, width=280):
     return fo.Detections(detections=detections)
     
 
-def get_masks_and_labels(gt, og_shape, pred_shape, filter_labels=None):
-    gt_mask = gt_labels = None
+def get_masks_and_labels(gt, og_shape, pred_shape, filter_labels=None, return_neg_mask=False):
+    gt_mask = gt_labels = neg_mask = None
     if gt is not None:
         gt = [d for d in gt.detections if d.mask is not None]
+        neg_gt = []
         
         if filter_labels is not None:  # only track certain labels
+            neg_gt = [d for d in gt if d.label not in filter_labels]
             gt = [d for d in gt if d.label in filter_labels]
 
         gt_conf = np.array([d.confidence for d in gt])
@@ -391,53 +417,58 @@ def get_masks_and_labels(gt, og_shape, pred_shape, filter_labels=None):
                 detection2mask(d, og_shape, pred_shape) 
                 for d in gt
             ]).cuda()
-            # if filter_labels is not None and 'hand(left)' in list(filter_labels):
-            #     embed()
+        if len(neg_gt) and return_neg_mask:
+            neg_mask = torch.stack([
+                detection2mask(d, og_shape, pred_shape) 
+                for d in neg_gt
+            ]).cuda()
         log.info(f"mask labels: {gt_labels} {gt_conf}")
+    if return_neg_mask:
+        return gt_mask, gt_labels, gt, neg_mask
     return gt_mask, gt_labels, gt
 
 
 
 
-def asymmetric_nms(boxes, scores, iou_threshold=0.99):
-    maxi = torch.maximum
-    area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+# def asymmetric_nms(boxes, scores, iou_threshold=0.99):
+#     maxi = torch.maximum
+#     area = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
 
-    # Sort boxes by their confidence scores in descending order
-    indices = torch.argsort(area, descending=True)
-    # indices = np.argsort(scores)[::-1]
-    boxes = boxes[indices]
-    scores = scores[indices]
+#     # Sort boxes by their confidence scores in descending order
+#     indices = torch.argsort(area, descending=True)
+#     # indices = np.argsort(scores)[::-1]
+#     boxes = boxes[indices]
+#     scores = scores[indices]
 
-    selected_indices = []
-    overlap_indices = []
-    while len(boxes) > 0:
-        # Pick the box with the highest confidence score
-        b = boxes[0]
-        selected_indices.append(indices[0])
+#     selected_indices = []
+#     overlap_indices = []
+#     while len(boxes) > 0:
+#         # Pick the box with the highest confidence score
+#         b = boxes[0]
+#         selected_indices.append(indices[0])
 
-        # Calculate IoU between the picked box and the remaining boxes
-        zero = torch.tensor([0], device=boxes.device)
-        intersection_area = (
-            torch.maximum(zero, torch.minimum(b[2], boxes[1:, 2]) - torch.maximum(b[0], boxes[1:, 0])) * 
-            torch.maximum(zero, torch.minimum(b[3], boxes[1:, 3]) - torch.maximum(b[1], boxes[1:, 1]))
-        )
-        smaller_box_area = torch.minimum(area[0], area[1:])
-        iou = intersection_area / (smaller_box_area + 1e-7)
+#         # Calculate IoU between the picked box and the remaining boxes
+#         zero = torch.tensor([0], device=boxes.device)
+#         intersection_area = (
+#             torch.maximum(zero, torch.minimum(b[2], boxes[1:, 2]) - torch.maximum(b[0], boxes[1:, 0])) * 
+#             torch.maximum(zero, torch.minimum(b[3], boxes[1:, 3]) - torch.maximum(b[1], boxes[1:, 1]))
+#         )
+#         smaller_box_area = torch.minimum(area[0], area[1:])
+#         iou = intersection_area / (smaller_box_area + 1e-7)
 
-        # Filter out boxes with IoU above the threshold
+#         # Filter out boxes with IoU above the threshold
 
-        overlap_indices.append(indices[torch.where(iou > iou_threshold)[0]])
-        filtered_indices = torch.where(iou <= iou_threshold)[0]
-        indices = indices[filtered_indices + 1]
-        boxes = boxes[filtered_indices + 1]
-        scores = scores[filtered_indices + 1]
-        area = area[filtered_indices + 1]
+#         overlap_indices.append(indices[torch.where(iou > iou_threshold)[0]])
+#         filtered_indices = torch.where(iou <= iou_threshold)[0]
+#         indices = indices[filtered_indices + 1]
+#         boxes = boxes[filtered_indices + 1]
+#         scores = scores[filtered_indices + 1]
+#         area = area[filtered_indices + 1]
 
-    selected_indices = (
-        torch.stack(selected_indices) if selected_indices else 
-        torch.zeros([0], dtype=torch.int32, device=boxes.device))
-    return selected_indices, overlap_indices
+#     selected_indices = (
+#         torch.stack(selected_indices) if selected_indices else 
+#         torch.zeros([0], dtype=torch.int32, device=boxes.device))
+#     return selected_indices, overlap_indices
 
 
 

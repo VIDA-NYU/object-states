@@ -5,9 +5,17 @@ DATASET:
 
 DATA:
   VOCAB: 
-    - 
+    # - bowl cup: bowl
+    - mug cup: mug
   UNTRACKED_VOCAB:
-    - 
+    - tea_bag
+    - spoon
+    - package
+    - jar
+    - honey_jar
+    - jar_lid
+    - water_bottle
+    - measuring_cup
 
 STEPS:
   - 

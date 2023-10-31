@@ -20,11 +20,12 @@ __pycache__/
 *.zip
 *.lprof
 *.pkl
+*.pkl-*
 
 *.mp4
 
 plots*/
-outputs/
+outputs*/
 
 # Distribution / packaging
 .Python

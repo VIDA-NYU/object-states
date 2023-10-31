@@ -76,8 +76,8 @@ class ObjectDetector:
         vocabulary, 
         state_db_fname=None, 
         xmem_config={}, 
-        conf_threshold=0.5, 
-        detect_hoi=False,
+        conf_threshold=0.3, 
+        detect_hoi=None,
         device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None
     ):
         # initialize models
@@ -89,16 +89,16 @@ class ObjectDetector:
         self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
         self.conf_threshold = conf_threshold
 
+        self.egohos = None
         self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
         self.egohos_hand_side = np.array(['', 'left', 'right', 'left', 'right', 'both', 'left', 'right', 'both', ''])
-        self.egohos = None
         if detect_hoi is not False:
             try:
                 from egohos import EgoHos
                 self.egohos = EgoHos('obj1', device=self.egohos_device).eval()
             except ImportError as e:
                 print('Could not import EgoHOS:', e)
-                if detic_hoi is True:
+                if detect_hoi is True:
                     raise
 
         self.xmem = XMem({
@@ -429,7 +429,7 @@ class ObjectDetector:
 class Perception:
     def __init__(self, *a, detect_every_n_seconds=0.5, max_width=480, **kw):
         self.detector = ObjectDetector(*a, **kw)
-        self.detect_every_n_seconds = detect_every_n_seconds
+        self.detect_every_n_seconds = 0 if detect_every_n_seconds is True else detect_every_n_seconds
         self.detection_timestamp = -detect_every_n_seconds
         self.max_width = max_width
 

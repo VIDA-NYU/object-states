@@ -1,0 +1,25 @@
+_BASE_: ../base.yaml
+DATASET:
+  ROOT: /datasets/ptgrecipes_multitask_pred
+  VIDEO_PATTERN: /datasets/ptgrecipes-multitask/tea_*.mp4
+
+DATA:
+  # https://github.com/KaihuaTang/LVIS-for-mmdetection/blob/master/LVIS_utils.py
+  VOCAB: 
+    - tortilla pizza circular paper_plate quesadilla pancake: tortilla
+    - bowl cup: bowl
+    - mug cup: mug
+    - plate
+  UNTRACKED_VOCAB:
+    - tortilla plastic_bag packet ice_pack circular: package_tortilla
+    - knife
+    - jar
+    - cutting board
+    - toothpicks
+    - microwave_oven
+    - floss
+    - kettle black atomizer: kettle
+    - scale_(measuring_instrument) cigarette_case electronic calculator iPad: scale
+    - thermometer pocketknife: thermometer
+    - coffee_grinder thermos_bottle canister cup: coffee_grinder
+    - paper paper_plate cupcake-liner cupcake muffin_liner seashell: filter

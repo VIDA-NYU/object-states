@@ -1,7 +1,7 @@
 import os
 import tqdm
 import logging
-
+import pathtrees as pt
 import cv2
 import numpy as np
 import pandas as pd
@@ -9,28 +9,38 @@ import torch
 import supervision as sv
 from object_states.inference import Perception, util
 from object_states.inference import util
-from object_states.util.video import DetectionAnnotator, XMemSink, backup_path
+from object_states.util.video import DetectionAnnotator, XMemSink, backup_path, get_video_info
 from object_states.util.format_convert import detectron_to_sv
 from object_states.util.data_output import json_dump
+from object_states.util import eta_format as eta
 from .vocab import VOCAB
 
 @torch.no_grad()
-def run_one(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, size=280, fps_down=1, out_dir='outputs', out_path=None):
+def run_one(src, tracked_vocab=None, state_db=None, vocab=VOCAB, size=280, fps_down=1, dataset_dir=None, out_dir='outputs', out_path=None, **kw):
     if tracked_vocab is not None:
         vocab['tracked'] = tracked_vocab
     model = Perception(
         vocabulary=vocab,
         state_db_fname=state_db,
-        detect_every_n_seconds=detect_every)
+        **kw)
 
     out_path = out_path or f'{out_dir}/{os.path.splitext(os.path.basename(src))[0]}'
     out_path = backup_path(out_path)
     print(out_path)
 
+    name = os.path.splitext(os.path.basename(src))[0]
+    treeA = pt.tree(out_dir, {
+        'labels': {'{name}.json': 'labels'},
+        'output_json': {'{name}_{stream_name}.json': 'output_json'},
+        'track_render': {'{name}': 'tracks'},
+        # 'manifest.json': 'manifest',
+    }, data={'name': name})
     output_json_files = {
-        'track': (f'{out_path}/detic-fast.json', []),
-        'frame': (f'{out_path}/detic-image.json', []),
+        'track': (treeA.output_json.format(stream_name='detic-fast'), []),
+        'frame': (treeA.output_json.format(stream_name='detic-image'), []),
     }
+
+    eta_data = eta.eta_base()
 
     try:
         ann = DetectionAnnotator()
@@ -45,6 +55,8 @@ def run_one(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.
                 # ---------------------------------- Predict --------------------------------- #
 
                 track_detections, frame_detections, hoi_detections = model.predict(frame, timestamp)
+
+                eta.add_frame(eta_data, i, eta.detectron2_objects(track_detections, frame.shape))
 
                 # -------------------------------- Draw frames ------------------------------- #
 
@@ -102,33 +114,11 @@ def run_one(src, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.
     finally:
         # -------------------------- Write out final outputs ------------------------- #
 
+        eta.save(eta_data, treeA.labels.format())
         for fname, data in output_json_files.values():
             json_dump(fname, data)
 
 
-def get_video_info(src, size, fps_down=1, nrows=1, ncols=1, render_scale=1):
-    # get the source video info
-    video_info = sv.VideoInfo.from_video_path(video_path=src)
-    print(f'Input Video {src}')
-    print(f"Original size: {[video_info.width, video_info.height]}")
-    # make the video size a multiple of 16 (because otherwise it won't generate masks of the right size)
-    aspect = video_info.width / video_info.height
-    video_info.width = int(aspect*size)//16*16
-    video_info.height = int(size)//16*16
-    WH = video_info.width, video_info.height
-    video_info.width *= render_scale
-    video_info.height *= render_scale
-    WH2 = video_info.width, video_info.height
-
-    # double width because we have both detic and xmem frames
-    video_info.width *= ncols
-    video_info.height *= nrows
-    # possibly reduce the video frame rate
-    video_info.og_fps = video_info.fps
-    video_info.fps /= fps_down or 1
-
-    print(f"size: {WH} {WH2} grid={ncols}x{nrows}  fps: {video_info.fps} ({fps_down or 1}x)")
-    return video_info, WH, WH2
 
 
 import ipdb

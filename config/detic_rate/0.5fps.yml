@@ -1,0 +1,6 @@
+_BASE_: base.yaml
+DATASET:
+  ROOT: /datasets/detic_0.5fps
+
+DETIC: 
+  DETECT_EVERY_SECS: 2

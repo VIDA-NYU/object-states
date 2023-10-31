@@ -6,8 +6,26 @@ DATASET:
 DATA:
   VOCAB: 
     - bowl
-    - microwave
-  UNTRACKED_VOCAB: []
+  UNTRACKED_VOCAB:
+    - tea_bag
+    - spoon
 
-STEPS:
-  - 
+    - honey_jar
+    - cinnamon_jar
+    - jar_lid
+    - jar
+
+    - large_oatmeal_container
+    - oatmeal_container
+    - tupperware_lid
+
+    - water_bottle
+    - water_jug
+
+    - measuring_cup
+
+    - raisins
+    - raisins_package
+    - package
+
+    - microwave

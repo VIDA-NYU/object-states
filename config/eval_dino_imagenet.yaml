@@ -2,14 +2,13 @@ _BASE_: base.yaml
 DATASET:
   ROOT: /datasets/ptgrecipes_eval
   VIDEO_PATTERN: /datasets/ptgrecipes_eval/data/*.mp4
-  # STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
+  STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
   # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
-  STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
+  # STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
   META_CSV: /datasets/PTG Object State Labels - Metadata.csv
-  EMBED_SKIP: 10
 
 EVAL:
-  USE_AUGMENTATIONS: False
+  USE_AUGMENTATIONS: True
   # EMBEDDING_DBS:
   #  - /datasets/static_eval/clip_office_noaug.lancedb
   #  - /datasets/states_eval/clip_

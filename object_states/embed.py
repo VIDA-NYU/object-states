@@ -40,7 +40,7 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
 
     # -------------------------------- Load models ------------------------------- #
 
-    detic = Detic(['cat'])
+    # detic = Detic(['cat'])
     model, preprocess = clip.load("ViT-B/32", device=device)
     
     # ------------------------------- Load dataset ------------------------------- #
@@ -52,7 +52,7 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
 
     view = dataset.view()
     if file_path:
-        view = view.match(F("filepath") == os.path.abspath(filepath))
+        view = view.match(F("filepath") == os.path.abspath(file_path))
         assert len(view) == 1
 
     view.compute_metadata(overwrite=True)
@@ -71,6 +71,8 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
 
     for sample in tqdm.tqdm(view):
         video_name = os.path.basename(sample.filepath)
+        if 'tortilla' in video_name:
+            continue
         
         counts = {k: next((i for i in sample.frames if sample.frames[i][k] is not None), None) for k in fields if sample.frames[1].has_field(k)}
         tqdm.tqdm.write(f"{video_name} field start frame: {counts}")
@@ -95,7 +97,7 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
         embeddings = defaultdict(lambda: defaultdict(lambda: defaultdict(lambda: [])))
 
         for i, frame, finfo, pbar in iter_video(sample, pbar=True):
-            # if skip_every and i % skip_every: continue
+            if skip_every and i % skip_every: continue
 
             # get detection
             try:
@@ -113,7 +115,8 @@ def main(config_fname, fields=['ground_truth_tracker', 'detections_tracker'], fi
 
             # ---------------------------- Get clip embeddings --------------------------- #
 
-            for xyxy, _, conf, _, track_id in detections:
+            for (xyxy, _, conf, _, track_id), label in zip(detections, labels):
+                if 'microwave' in label: continue
                 rgb = frame[:,:,::-1]
                 crop: np.ndarray = crop_box(rgb, xyxy)
                 if not crop.size:

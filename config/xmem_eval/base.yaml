@@ -16,8 +16,8 @@ XMEM:
     # max_mid_term_frames: 12
     # max_long_term_elements: 1000
     # tentative_frames: 4
-    # tentative_age: 3
-    # max_age: 60  # in steps
+    tentative_age: 3
+    max_age: 60  # in steps
     min_iou: 0.4
 
 DATA:

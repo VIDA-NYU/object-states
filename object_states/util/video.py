@@ -149,6 +149,51 @@ def crop_box(frame, bbox, padding=0):
         max(x - padding, 0):min(x2 + padding, W)]
 
 
+
+def crop_box_with_size(frame, bbox, target_size, padding=0):
+    H, W = frame.shape[:2]
+    x, y, x2, y2 = map(int, bbox)
+    
+    # Calculate the current width and height of the bounding box
+    current_width = x2 - x
+    current_height = y2 - y
+    current_aspect_ratio = current_width / current_height
+    
+    # Calculate the center of the bounding box
+    x_center = (x + x2) / 2
+    y_center = (y + y2) / 2
+    
+    # Calculate the new bounding box dimensions to match the desired size
+    final_width, final_height = target_size
+    target_aspect_ratio = final_width / final_height
+
+    # If an aspect_ratio is specified, adjust the bounding box to match it
+    new_width, new_height = (
+        (current_width, int(current_width / target_aspect_ratio))
+        if current_aspect_ratio > target_aspect_ratio else 
+        (int(current_height * target_aspect_ratio), current_height)
+    )
+    # print(current_width, current_height)
+    # print(new_width, new_height)
+    # print(final_width, final_height)
+
+    # Calculate the new coordinates for the bounding box
+    x = max(int(x_center - new_width / 2), 0)
+    y = max(int(y_center - new_height / 2), 0)
+    x2 = min(int(x_center + new_width / 2), W)
+    y2 = min(int(y_center + new_height / 2), H)
+
+    # Crop the region
+    cropped_region = frame[
+        max(y - padding, 0):min(y2 + padding, H),
+        max(x - padding, 0):min(x2 + padding, W)]
+    
+    # Resize the cropped region to the desired size
+    resized_cropped_region = cv2.resize(cropped_region, target_size)
+
+    return resized_cropped_region
+
+
 def resize_with_pad(image, new_shape):
     """Maintains aspect ratio and resizes with padding."""
     original_shape = (image.shape[1], image.shape[0])
@@ -183,14 +228,39 @@ def iter_video(video_sample, pbar=False):
         yield (i, frame, finfo, it) if pbar else (i, frame, finfo)
 
 
-def get_video_info(src, size, fps_down=1, nrows=1, ncols=1):
+# def get_video_info(src, size, fps_down=1, nrows=1, ncols=1):
+#     # get the source video info
+#     video_info = sv.VideoInfo.from_video_path(video_path=src)
+#     # make the video size a multiple of 16 (because otherwise it won't generate masks of the right size)
+#     aspect = video_info.width / video_info.height
+#     video_info.width = int(aspect*size)//16*16
+#     video_info.height = int(size)//16*16
+#     WH = video_info.width, video_info.height
+
+#     # double width because we have both detic and xmem frames
+#     video_info.width *= ncols
+#     video_info.height *= nrows
+#     # possibly reduce the video frame rate
+#     video_info.og_fps = video_info.fps
+#     video_info.fps /= fps_down or 1
+
+#     print(f"Input Video {src}\nsize: {WH}  fps: {video_info.fps}")
+#     return video_info, WH
+
+
+def get_video_info(src, size, fps_down=1, nrows=1, ncols=1, render_scale=1):
     # get the source video info
     video_info = sv.VideoInfo.from_video_path(video_path=src)
+    print(f'Input Video {src}')
+    print(f"Original size: {[video_info.width, video_info.height]}")
     # make the video size a multiple of 16 (because otherwise it won't generate masks of the right size)
     aspect = video_info.width / video_info.height
     video_info.width = int(aspect*size)//16*16
     video_info.height = int(size)//16*16
     WH = video_info.width, video_info.height
+    video_info.width *= render_scale
+    video_info.height *= render_scale
+    WH2 = video_info.width, video_info.height
 
     # double width because we have both detic and xmem frames
     video_info.width *= ncols
@@ -199,9 +269,8 @@ def get_video_info(src, size, fps_down=1, nrows=1, ncols=1):
     video_info.og_fps = video_info.fps
     video_info.fps /= fps_down or 1
 
-    print(f"Input Video {src}\nsize: {WH}  fps: {video_info.fps}")
-    return video_info, WH
-
+    print(f"size: {WH} {WH2} grid={ncols}x{nrows}  fps: {video_info.fps} ({fps_down or 1}x)")
+    return video_info, WH, WH2
 
 
 # ---------------------------------------------------------------------------- #

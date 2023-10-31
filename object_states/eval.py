@@ -5,9 +5,16 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import KBinsDiscretizer, StandardScaler
+# from sklearn.svm import SVC, LinearSVC
+
+# from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_recall_fscore_support
 from sklearn.preprocessing import StandardScaler
 from sklearn.manifold import TSNE, Isomap
@@ -22,6 +29,16 @@ from IPython import embed
 #                                 Data Loading                                 #
 # ---------------------------------------------------------------------------- #
 
+class bc:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    WARNING = '\033[93m'
+    FAIL = '\033[91m'
+    END = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
 
 def load_data(cfg, data_file_pattern, include=None):
     '''Load npz files (one per video) with embedding and label keys and concatenate
@@ -46,6 +63,9 @@ def load_data(cfg, data_file_pattern, include=None):
     fs = glob.glob(data_file_pattern)
     if cfg.EVAL.TRAIN_BASE_ROOT:
         fs += glob.glob(f'{cfg.EVAL.TRAIN_BASE_ROOT}/embeddings/{cfg.EVAL.DETECTION_NAME}/*/clip/*.npz')
+    if len(set(fs)) < len(fs):
+        print("Warning duplicate files in training set!\n\n")
+        input()
 
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
@@ -70,7 +90,7 @@ def load_data(cfg, data_file_pattern, include=None):
             video_id = f.split('/')[-3]
         else:
             video_id = video_id.item()
-        video_id = video_id.removesuffix('.mp4')
+        video_id = os.path.splitext(video_id)[0]
         track_id = data.get('track_id')
         if track_id is None:
             track_id = f.split('/')[-1].split('.')[0]
@@ -79,7 +99,7 @@ def load_data(cfg, data_file_pattern, include=None):
         track_id = int(track_id)
 
         if video_id not in dfs or track_id not in dfs[video_id]:
-            tqdm.tqdm.write(f"Skipping: {video_id}: {track_id}")
+            tqdm.tqdm.write(f"{bc.FAIL}Skipping{bc.END}: {video_id}: {track_id}")
             continue
         tqdm.tqdm.write(f"Using: {video_id}: {track_id}")
 
@@ -140,6 +160,9 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
 
     X_train, X_test = X[i_train], X[i_test]
     y_train, y_test = y[i_train], y[i_test]
+    print(set(y_train))
+    print(set(y_test))
+    # if input(): embed()
 
     assert not (set(video_ids[i_train]) & set(video_ids[i_test])), "Being extra sure... this is a nono"
 
@@ -185,6 +208,17 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
 
         meta['run_name'] = f'{run_name}_movingavg-{winsize}'
         meta['moving_average'] = winsize
+        metrics = get_metrics(y_test, y_pred_, **meta)
+        all_metrics.append(metrics)
+
+    for alpha in [0.1, 0.2, 0.5]:
+        y_ = exponentially_decaying_average(y_emis, alpha)
+        y_pred_ = np.asarray(model.classes_)[np.argmax(y_, axis=1)]
+        emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ema{alpha}_ypred_', show_ypred=True, video_ids=video_ids_test)
+        cm_plot(plot_dir, y_test, y_pred, model.classes_, f'{run_name}_')
+
+        meta['run_name'] = f'{run_name}_expmovingavg-{winsize}'
+        meta['exp_moving_average'] = winsize
         metrics = get_metrics(y_test, y_pred_, **meta)
         all_metrics.append(metrics)
 
@@ -355,9 +389,8 @@ def exponentially_decaying_average(a, decay_rate):
     assert 0 < decay_rate < 1, "Decay rate must be between 0 and 1."
     result = a.copy()
     result[0, :] = a[0, :]
-    for t in range(1, a.shape):
+    for t in range(1, a.shape[0]):
         result[t, :] = decay_rate * result[t - 1, :] + (1 - decay_rate) * a[t, :]
-
     return result
 
 # ---------------------------------------------------------------------------- #
@@ -372,20 +405,22 @@ def run(config_name):
     os.makedirs('plots', exist_ok=True)
 
     # emb_dir = cfg.DATASET.EMBEDDING_DIR
-    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
+    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings-all', cfg.EVAL.DETECTION_NAME)
+    base_emb_dir = os.path.join(cfg.EVAL.TRAIN_BASE_ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
     emb_types = cfg.EVAL.EMBEDDING_TYPES
 
+    STATE = 'super_simple_state'
     STATE = 'state'
 
     train_split = read_split_file(cfg.EVAL.TRAIN_CSV)
     train_base_split = read_split_file(cfg.EVAL.TRAIN_BASE_CSV)
     val_splits = [(f, read_split_file(f)) for f in cfg.EVAL.VAL_CSVS]
-    print(train_base_split)
-    print(train_split)
-    print(val_splits)
+    print(len(train_base_split), train_base_split[:5])
+    print(len(train_split), train_split[:5])
+    print(len(val_splits), val_splits[:5])
 
     full_train_split = train_split + train_base_split
-    full_split =full_train_split + [x for f, xs in val_splits for x in xs]
+    full_split = full_train_split + [x for f, xs in val_splits for x in xs]
     print(full_split)
 
     for _,val_split in val_splits:
@@ -398,19 +433,36 @@ def run(config_name):
         # (KNeighborsClassifier, 'knn5',  {'n_neighbors': 5}),
         (KNeighborsClassifier, 'knn11', {'n_neighbors': 11}),
         # (KNeighborsClassifier, 'knn50', {'n_neighbors': 50}),
-        # (RandomForestClassifier, 'rf',  {}),
+        (LogisticRegression, 'logreg',  {}),
+        (RandomForestClassifier, 'rf',  {}),
+        # (
+        #     make_pipeline(
+        #         StandardScaler(),
+        #         KBinsDiscretizer(encode="onehot", random_state=0),
+        #         LogisticRegression(random_state=0),
+        #     ),
+        #     'kbins_logreg', 
+        #     {
+        #         "kbinsdiscretizer__n_bins": np.arange(5, 8),
+        #         "logisticregression__C": np.logspace(-1, 1, 3),
+        #     },
+        # ),
     ]
 
     # , 'detic', 'detic_s0', 'detic_s1', 'detic_s2'
     emb_types=['clip']
     for emb_type in tqdm.tqdm(emb_types, desc='embedding type'):
+        # data_file_pattern = f'{base_emb_dir}/*/{emb_type}/*.npz'
+        # ydf2 = load_data(cfg, data_file_pattern, include=full_split)
         data_file_pattern = f'{emb_dir}/*/{emb_type}/*.npz'
-
-        ydf1 = load_data(cfg, data_file_pattern, include=full_split)
-        ydf2 = load_data_from_db(cfg, state_col='full_state')
-        assert None not in set(ydf2.state)
-        ydf = pd.concat([ydf1, ydf2])
-        assert None not in set(ydfw.state)
+        ydf = load_data(cfg, data_file_pattern, include=full_split)
+        # ydf2 = load_data_from_db(cfg, state_col='super_simple_state')
+        # assert None not in set(ydf2.state)
+        # ydf = pd.concat([ydf1, ydf2])
+        print(ydf.groupby('object').state.value_counts())
+        ydf = ydf.groupby(STATE, group_keys=False).apply(lambda x: x.sample(min(len(x), 12000)))
+        print(ydf.groupby('object').state.value_counts())
+        assert None not in set(ydf.state)
         emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['object'].values, 'object')
         emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['state'].values, 'states')
 
@@ -422,6 +474,7 @@ def run(config_name):
                 y = odf[STATE].values
                 video_ids = odf['video_id'].values
                 unique_video_ids = np.unique(video_ids)
+                emb_plot(f'plots/{emb_type}_{object_name}', X, y, 'states')
 
                 obj_train_base_split = [f for f in train_base_split if f in video_ids]
                 obj_train_split = [f for f in train_split if f in video_ids]
@@ -450,10 +503,11 @@ def run(config_name):
                 all_metrics = []
                 all_per_class_metrics = []
                 # range(len(obj_train_split))
-                for nvids in tqdm.tqdm([8, len(obj_train_split)], desc='n videos'):
-                    nvids += 1
+                for nvids in tqdm.tqdm([0, len(obj_train_split)], desc='n videos'):
+                    # nvids += 1
                     i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
                     i_val = np.isin(video_ids, obj_val_split)
+                    # embed()
 
                     # a=odf.iloc[i_train][['video_id', STATE]].value_counts()
                     # a.to_csv(f"{plot_dir}/train_stats_{nvids}vids.csv")
@@ -467,8 +521,10 @@ def run(config_name):
 
                     print("Train Counts:")
                     train_counts = show_counts(y[i_train])
+                    print(train_counts)
                     print("Val Counts:")
                     val_counts = show_counts(y[i_val])
+                    print(val_counts)
 
 
                     for cls, name, kw in tqdm.tqdm(models, desc='models'):

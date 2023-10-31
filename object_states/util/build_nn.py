@@ -44,6 +44,7 @@ def load_object_annotations(meta_csv, states_csv):
             odf['object'] = c
             if not len(odf):
                 continue
+            track_id=None
             for track_id in row[c]:
                 objs[track_id] = odf
             print(vid, track_id, odf.shape)
@@ -69,7 +70,7 @@ def get_obj_anns(dfs, frame_idx):
     return pd.DataFrame(idxs)
 
 
-def load_data(cfg, data_file_pattern, use_aug=True):
+def load_data(cfg, data_file_pattern, use_aug=True, data_slice=None):
     '''Load npz files (one per video) with embedding and label keys and concatenate
     
     
@@ -223,7 +224,7 @@ def dump_db(db_fname, df):
     # ---------------------- Write out table for each object --------------------- #
 
     for object_name, odf in tqdm.tqdm(df.groupby('object')):
-        if object_name != 'tortilla': continue
+        # if object_name != 'tortilla': continue
         if object_name in table_names:
             # if not overwrite:
             #     print("table", object_name, 'exists')
@@ -240,12 +241,12 @@ def dump_db(db_fname, df):
 
 import ipdb
 @ipdb.iex
-def build(config_name, overwrite=False):
+def build(config_name, embeddings_dir='embeddings', overwrite=False):
     cfg = get_cfg(config_name)
     tree = pt.tree(cfg.DATASET.ROOT, {
-        'embeddings1/{field_name}/{video_id}/{emb_type}/{track_id}.npz': 'emb_file',
+        '{embeddings_dir}/{field_name}/{video_id}/{emb_type}/{track_id}.npz': 'emb_file',
         '{emb_type}.lancedb': 'db_fname',
-    })
+    }).specify(embeddings_dir=embeddings_dir)
     # emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings1', cfg.EVAL.DETECTION_NAME)
     # emb_types = cfg.EVAL.EMBEDDING_TYPES
 
