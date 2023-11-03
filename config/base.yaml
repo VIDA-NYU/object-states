@@ -10,6 +10,7 @@ DATASET:
   STATES_CSVS:
     super_simple: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
     full: /datasets/PTG Object State Labels - Step Annotations.csv
+  EMBEDDING_DIR: 
 
   N_AUGMENTATIONS: 10
   EMBED_SKIP: 5
@@ -26,7 +27,7 @@ DATA:
 
 EVAL:
   DETECTION_NAME: '*'
-  EMBEDDING_TYPES: ['clip', 'detic', 'detic_s0', 'detic_s1', 'detic_s2']
+  EMBEDDING_TYPES: ['clip'] #['clip', 'detic', 'detic_s0', 'detic_s1', 'detic_s2']
 
 
 DETIC: 

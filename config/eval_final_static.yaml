@@ -1,16 +1,25 @@
 _BASE_: base.yaml
 DATASET:
   ROOT: /datasets/annotation_final
+  EVAL_ROOT: /datasets/annotation_final_eval
   VIDEO_PATTERN: /datasets/Bridget_videos/*.mp4
-  # STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
+  STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
   # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
-  STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
+  # STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
   META_CSV: /datasets/PTG Object State Labels - Metadata.csv
 
 EVAL:
+  PLOT_DIR: plots-15-all-models-full-db-full-aug
   USE_AUGMENTATIONS: True
+  EMBEDDING_DIRS:
+  #  - /datasets/annotation_final/embeddings-all
+  #  - /datasets/annotation_final/embeddings-eval
+   - /datasets/annotation_final_eval/embeddings
   EMBEDDING_DBS:
-   - /datasets/static_eval/clip_office_noaug.lancedb
+   - /datasets/annotation_final/x2sampledfull-aug.lancedb
+  #  - /datasets/annotation_final/full.lancedb
+  #  - /datasets/static_eval/clip_office_noaug.lancedb
+
   #  - /datasets/states_eval/clip_
   TRAIN_BASE_ROOT: /datasets/annotation_final
   TRAIN_BASE_CSV: config/train_static_base.txt

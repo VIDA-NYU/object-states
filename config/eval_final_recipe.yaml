@@ -6,6 +6,7 @@ DATASET:
   # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
   STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
   META_CSV: /datasets/PTG Object State Labels - Metadata.csv
+  EMBEDDING_DIR: /datasets/annotation_final/embeddings-eval/detections_tracker
 
 EVAL:
   USE_AUGMENTATIONS: True

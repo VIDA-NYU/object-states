@@ -51,6 +51,7 @@ class XMemSink(VideoSink):
     '''Create both a full video
     '''
     def __init__(self, target_path, video_info, **kw):
+        backup_path(target_path)
         os.makedirs(target_path, exist_ok=True)
         super().__init__(f'{target_path}/full.mp4', video_info)
         # self.ann = DetectionAnnotator()
@@ -215,7 +216,7 @@ def resize_with_pad(image, new_shape):
 
 
 def iter_video(video_sample, pbar=False):
-    video_path = video_sample.filepath
+    video_path = video_sample.filepath if not isinstance(video_sample, str) else video_sample
     video_info = sv.VideoInfo.from_video_path(video_path=video_path)
 
     it = tqdm.tqdm(
@@ -226,6 +227,16 @@ def iter_video(video_sample, pbar=False):
     for i, frame in it:
         finfo = video_sample.frames[i]
         yield (i, frame, finfo, it) if pbar else (i, frame, finfo)
+
+def iter_video2(video_path, pbar=False):
+    video_info = sv.VideoInfo.from_video_path(video_path=video_path)
+    it = tqdm.tqdm(
+        enumerate(sv.get_video_frames_generator(video_path), 1),
+        total=video_info.total_frames,
+        desc=video_path)
+    for i, frame in it:
+        yield (i, frame, it) if pbar else (i, frame)
+
 
 
 # def get_video_info(src, size, fps_down=1, nrows=1, ncols=1):

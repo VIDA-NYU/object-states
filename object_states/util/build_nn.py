@@ -84,7 +84,7 @@ def load_data(cfg, data_file_pattern, use_aug=True, data_slice=None):
     }
     # embed()
 
-    fs = glob.glob(data_file_pattern)
+    fs = glob.glob(data_file_pattern) if not isinstance(data_file_pattern, list) else data_file_pattern
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
         # print(f)
@@ -239,6 +239,30 @@ def dump_db(db_fname, df):
 
 
 
+def fix_vocab(sdf):
+    RENAME = {
+        '[partial]': '',
+        '[full]': '',
+        'floss-underneath': 'ends-cut',
+        'floss-crossed': 'ends-cut',
+        'raisins[cooked]': 'raisins',
+        'oatmeal[cooked]+raisins': 'oatmeal+raisins',
+        'teabag': 'tea-bag',
+        '+stirrer': '',
+        '[stirred]': '',
+        'water+honey': 'water',
+        'with-quesadilla': 'with-food',
+        'with-pinwheels': 'with-food',
+    }
+    sdf['mod_state'] = sdf.full_state.copy()
+    for old, new in RENAME.items():
+        sdf['mod_state'] = sdf.mod_state.str.replace(old, new)
+    sdf = sdf[~sdf.mod_state.isin(['folding', 'rolling', 'oatmeal+raisins+cinnamon', 'oatmeal+raisins+cinnamon+honey', 'on-plate'])]
+    sdf.groupby('object').mod_state.value_counts()
+    sdf['super_simple_state'] = sdf['mod_state']
+    return sdf
+
+
 import ipdb
 @ipdb.iex
 def build(config_name, embeddings_dir='embeddings', overwrite=False):
@@ -255,6 +279,7 @@ def build(config_name, embeddings_dir='embeddings', overwrite=False):
 
         data_file_pattern = tree.emb_file.specify(emb_type=emb_type).glob_format() #f'{emb_dir}/*/{emb_type}/*.npz'
         df = load_data(cfg, data_file_pattern)
+        df = fix_vocab(df)
 
         # ----------------------------- Open the database ---------------------------- #
         # db_fname = os.path.join(cfg.DATASET.ROOT, f'{cfg.EVAL.DETECTION_NAME}_{emb_type}.lancedb')

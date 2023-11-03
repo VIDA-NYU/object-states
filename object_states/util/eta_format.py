@@ -85,18 +85,24 @@ def binary_mask_to_polygon(mask):
     return contours
 
 def polygon_to_binary_mask(polylines, shape):
-    mask = np.zeros(shape, np.uint8)
-    shape = np.array(shape)#[::-1]
+    mask = np.zeros(shape[:2], np.uint8)
+    shape = np.array(shape[:2])[::-1]
     polylines = [(np.asarray(p).reshape(-1, 2) * shape).astype(int) for p in polylines]
     return cv2.fillPoly(mask, polylines, color=1)
 
 # ------------------------------- Bounded mask ------------------------------- #
 
-def bounded_to_binary_mask(obj_mask, bbox, frame_size):
-    W, H = frame_size
+def bounded_to_binary_mask(obj_mask, bbox, shape, min_size=1):
+    # W, H = shape[:2]
+    H, W = shape[:2]
     mask = np.zeros((H, W), dtype=bool)
-    x1, y1, x2, y2 = box_to_xyxy(bbox)
-    mask[y1:y2, x1:x2] = cv2.resize(np.asarray(obj_mask), (x2 - x1, y2 - y1))
+    x1, y1, x2, y2 = box_to_xyxy(bbox, shape)
+    if min(x2-x1, y2-y1) <= min_size:
+        return 
+    mask[y1:y2, x1:x2] = cv2.resize(
+        np.asarray(obj_mask, dtype=np.uint8), 
+        (max(1, x2 - x1), max(1, y2 - y1)), 
+        interpolation=cv2.INTER_NEAREST)
     return mask
 
 def binary_to_bounded_mask(mask, bbox):
@@ -113,16 +119,17 @@ def parse_object_mask(object, shape):
 # ------------------------------- Bounding box ------------------------------- #
 
 def box_to_xyxy(bbox, shape):
-    W, H = shape
-    x1 = int(min(max(0, bbox['top_left']['x'] * W), W))
-    y1 = int(min(max(0, bbox['top_left']['y'] * H), H))
-    x2 = int(min(max(0, bbox['bottom_right']['x'] * W), W))
-    y2 = int(min(max(0, bbox['bottom_right']['y'] * H), H))
+    # W, H = shape
+    H, W = shape[:2]
+    x1 = int(min(max(0, bbox['top_left']['x'] * W), W-1))
+    y1 = int(min(max(0, bbox['top_left']['y'] * H), H-1))
+    x2 = int(min(max(0, bbox['bottom_right']['x'] * W), W-1))
+    y2 = int(min(max(0, bbox['bottom_right']['y'] * H), H-1))
     return np.array([x1, y1, x2, y2])
 
 def xyxy_to_box(xyxy, shape):
     x1, y1, x2, y2 = xyxy
-    w, h = shape
+    h, w = shape[:2]
     return {
         "top_left": { "x": x1 / w, "y": y1 / h },
         "bottom_right": { "x": x2 / w, "y": y2 / h },
@@ -147,30 +154,48 @@ def detectron2_objects(instances, shape, classes=None):
         ))
     ]
 
-def get_frame_objects(base, i, shape=(1080, 1920), load_mask=True):
+def get_frame_objects(base, i, shape, load_mask=True):
     objects = get_objects(base, i)
 
     boxes = []
     masks = []
     labels = []
     confidences = []
+    track_ids = []
     for obj in objects:
         boxes.append(box_to_xyxy(obj['bounding_box'], shape))
-        masks.append(parse_object_mask(obj, shape) if load_mask else None)
-        labels.append(obj['label'])
-        confidences.append(obj['confidence'])
+        mask = None
+        if load_mask:
+            mask = parse_object_mask(obj, shape)
+        masks.append(mask if mask is not None else np.zeros(shape[:2], dtype=bool))
+        labels.append(obj.get('label'))
+        confidences.append(obj.get('confidence', 1))
+        track_ids.append(obj.get('index'))
     return (
         np.asarray(boxes).reshape(-1, 4),
         np.asarray(masks).reshape(-1, *shape[:2]),
         np.asarray(labels),
         np.asarray(confidences),
+        np.asarray(track_ids),
     )
 
 def get_objects(base, i):
     try:
-        return base['frames'][str(i+1)]['objects']['objects'] or []
+        if isinstance(i, int):
+            i = str(i+1)
+        return base['frames'][i]['objects']['objects'] or []
     except KeyError:
         return []
+
+def get_sv_detections(base, i, shape):
+    import supervision as sv
+    xyxy, mask, labels, confidence, track_ids = get_frame_objects(base, i, shape, load_mask=True)
+    return sv.Detections(
+        xyxy=xyxy,
+        mask=mask,
+        confidence=confidence,
+        tracker_id=track_ids,
+    ), labels
 
 # ---------------------------------------------------------------------------- #
 #                                   Manifest                                   #
@@ -264,10 +289,10 @@ def dataset_from_labels(dataset_dir, *video_dirs):
     return save(manifest(file_list), manifest_fname(dataset_dir), overwrite=True)
 
 
-def rewrite_manifest(video_dir, dataset_dir):
-    manifest = manifest_from_dirs(video_dir, dataset_dir)
-    fname = save(manifest, manifest_fname(dataset_dir))
-    return load(fname)
+# def rewrite_manifest(video_dir, dataset_dir):
+#     manifest = manifest_from_dirs(video_dir, dataset_dir)
+#     fname = save(manifest, manifest_fname(dataset_dir))
+#     return load(fname)
 
 
 def file_tree(root_dir):

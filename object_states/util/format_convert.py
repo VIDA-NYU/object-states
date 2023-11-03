@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
 import torch
-import fiftyone as fo
+# import fiftyone as fo
 import supervision as sv
 
 

@@ -5,13 +5,15 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
-
+import pickle
 from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import KBinsDiscretizer, StandardScaler
+from sklearn.pipeline import Pipeline
+import joblib
 # from sklearn.svm import SVC, LinearSVC
 
 # from sklearn.linear_model import LogisticRegression
@@ -23,6 +25,34 @@ from .config import get_cfg
 from .util.step_annotations import load_object_annotations, get_obj_anns
 
 from IPython import embed
+
+import warnings
+warnings.simplefilter('once')
+
+
+STATE = 'state'
+
+
+def remap_labels(sdf, old_col, new_col):
+    RENAME = {
+        '[partial]': '',
+        '[full]': '',
+        'floss-underneath': 'ends-cut',
+        'floss-crossed': 'ends-cut',
+        'raisins[cooked]': 'raisins',
+        'oatmeal[cooked]+raisins': 'oatmeal+raisins',
+        'teabag': 'tea-bag',
+        '+stirrer': '',
+        '[stirred]': '',
+        'water+honey': 'water',
+        'with-quesadilla': 'with-food',
+        'with-pinwheels': 'with-food',
+    }
+    sdf[new_col] = sdf[old_col].copy()
+    for old, new in RENAME.items():
+        sdf[new_col] = sdf[new_col].str.replace(old, new)
+    sdf = sdf[~sdf[new_col].isin(['folding', 'on-plate', 'rolling'])]
+    return sdf
 
 
 # ---------------------------------------------------------------------------- #
@@ -46,11 +76,11 @@ def load_data(cfg, data_file_pattern, include=None):
     
     
     '''
-    if os.path.isfile('dataset.pkl'):
-        print('reading pickle')
-        df = pd.read_pickle('dataset.pkl')
-        print(df.head())
-        return df
+    # if os.path.isfile('dataset.pkl'):
+    #     print('reading pickle')
+    #     df = pd.read_pickle('dataset.pkl')
+    #     print(df.head())
+    #     return df
     use_aug = cfg.EVAL.USE_AUGMENTATIONS
 
     embeddings_list, df_list = [], []
@@ -61,14 +91,16 @@ def load_data(cfg, data_file_pattern, include=None):
     dfs = load_object_annotations(cfg)
 
     fs = glob.glob(data_file_pattern)
-    if cfg.EVAL.TRAIN_BASE_ROOT:
-        fs += glob.glob(f'{cfg.EVAL.TRAIN_BASE_ROOT}/embeddings/{cfg.EVAL.DETECTION_NAME}/*/clip/*.npz')
+    # if cfg.EVAL.TRAIN_BASE_ROOT:
+    #     fs += glob.glob(f'{cfg.EVAL.TRAIN_BASE_ROOT}/embeddings/{cfg.EVAL.DETECTION_NAME}/*/clip/*.npz')
     if len(set(fs)) < len(fs):
         print("Warning duplicate files in training set!\n\n")
         input()
 
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
+        if 'coffee_mit-eval' in f:
+            embed()
         if include and not any(fi in f for fi in include):
             print("Skipping", f)
             continue
@@ -104,7 +136,7 @@ def load_data(cfg, data_file_pattern, include=None):
         tqdm.tqdm.write(f"Using: {video_id}: {track_id}")
 
         # get object state annotations
-        ann = get_obj_anns(dfs[video_id][track_id], frame_idx)
+        ann = get_obj_anns(remap_labels(dfs[video_id][track_id], 'state', 'state'), frame_idx)
         embeddings_list.append(z)
         df_list.append(pd.DataFrame({
             'index': frame_idx,
@@ -129,7 +161,11 @@ def load_data(cfg, data_file_pattern, include=None):
 def load_data_from_db(cfg, state_col, emb_type='clip'):
     import lancedb
     dfs = []
-    for db_fname in cfg.EVAL.EMBEDDING_DBS or [os.path.join(cfg.DATASET.ROOT, f'{emb_type}.lancedb')]:
+    fs = cfg.EVAL.EMBEDDING_DBS
+    f = os.path.join(cfg.DATASET.ROOT, f'{emb_type}.lancedb')
+    if not fs and os.path.isfile(f):
+        fs = [f]
+    for db_fname in fs:
         print(db_fname)
         assert os.path.isdir(db_fname)
         db = lancedb.connect(db_fname)
@@ -155,19 +191,38 @@ def read_split_file(fname):
 
 def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plots', **meta):
     '''Train and evaluate a model'''
+    print(run_name, model)
     # plot_dir = f'{plot_dir}/{run_name}'
     # os.makedirs(plot_dir, exist_ok=True)
 
     X_train, X_test = X[i_train], X[i_test]
     y_train, y_test = y[i_train], y[i_test]
-    print(set(y_train))
-    print(set(y_test))
+    # print(set(y_train))
+    # print(set(y_test))
     # if input(): embed()
+
+    # from imblearn.over_sampling import SMOTE
+    # from imblearn.under_sampling import RandomUnderSampler
+    # from imblearn.pipeline import Pipeline
+
+    # # Create a pipeline to balance the classes using SMOTE
+    # pipeline = Pipeline([
+    #     # ('oversample', SMOTE(sampling_strategy='auto')),  # You can adjust sampling_strategy
+    #     ('undersample', RandomUnderSampler(sampling_strategy='auto'))  # You can adjust sampling_strategy
+    # ])
+
+    # X_test2, y_test2 = X_test, y_test
+    # X_test, y_test = pipeline.fit_resample(X_test, y_test)
+    # print(X_test2.shape, y_test2.shape, X_test.shape, y_test.shape)
 
     assert not (set(video_ids[i_train]) & set(video_ids[i_test])), "Being extra sure... this is a nono"
 
     # Standardize features
     scaler = StandardScaler()
+    pipeline = Pipeline([
+        ('scaler', scaler),
+        ('model', model)
+    ])
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
 
@@ -180,6 +235,12 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
     y_pred = model.predict(X_test)
     y_emis = model.predict_proba(X_test)
 
+    # with open(os.path.join(plot_dir, f'{run_name}.pkl'), 'rb') as f:
+    #     pickle.dump(y_pred, f)
+    # Save the entire pipeline
+    with open(os.path.join(plot_dir, f'{run_name}_pipeline.pkl'), 'wb') as f:
+        joblib.dump(pipeline, f)
+
     # ------------------------------- Visualization ------------------------------ #
 
     # Generate plots
@@ -187,7 +248,7 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
     all_metrics = []
 
     # compute vanilla metrics
-    meta['run_name'] = run_name
+    meta['run_name'] = meta['metric_name'] = run_name
     metrics = get_metrics(y_test, y_pred, **meta)
     all_metrics.append(metrics)
     tqdm.tqdm.write(f'Accuracy for {run_name}: {metrics["accuracy"]:.2f}')
@@ -206,9 +267,9 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
         emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ma{winsize}_ypred_', show_ypred=True, video_ids=video_ids_test)
         cm_plot(plot_dir, y_test, y_pred_, model.classes_, f'{run_name}_cm_ma{winsize}_')
 
-        meta['run_name'] = f'{run_name}_movingavg-{winsize}'
-        meta['moving_average'] = winsize
-        metrics = get_metrics(y_test, y_pred_, **meta)
+        meta = {**meta}
+        meta['metric_name'] = f'{run_name}_movingavg-{winsize}'
+        metrics = get_metrics(y_test, y_pred_, smoothing='ma', win_size=winsize, **meta)
         all_metrics.append(metrics)
 
     for alpha in [0.1, 0.2, 0.5]:
@@ -217,9 +278,9 @@ def train_eval(run_name, model, X, y, i_train, i_test, video_ids, plot_dir='plot
         emission_plot(plot_dir, y_, y_test, model.classes_, f'{run_name}_ema{alpha}_ypred_', show_ypred=True, video_ids=video_ids_test)
         cm_plot(plot_dir, y_test, y_pred, model.classes_, f'{run_name}_')
 
-        meta['run_name'] = f'{run_name}_expmovingavg-{winsize}'
-        meta['exp_moving_average'] = winsize
-        metrics = get_metrics(y_test, y_pred_, **meta)
+        meta = {**meta}
+        meta['metric_name'] = f'{run_name}_expmovingavg-{alpha}'
+        metrics = get_metrics(y_test, y_pred_, smoothing='ema', alpha=alpha, **meta)
         all_metrics.append(metrics)
 
     # y_hmm = hmm_forward(y_emis, len(model.classes_))
@@ -325,28 +386,53 @@ def n_videos_metrics(plot_dir, all_metrics, prefix=''):
     pltsave(f'{plot_dir}/{prefix}accuracy_f1_vs_videos.png')
 
 
-def n_videos_class_metrics(plot_dir, all_metrics, prefix=''):
+def cross_model_metrics(plot_dir, all_metrics, prefix=''):
     # Plot accuracy and F1-score vs. the number of videos
-    plt.figure(figsize=(12, 5))
+    plt.figure(figsize=(15, 6))
     plt.subplot(1, 2, 1)
-    for c, df in all_metrics.groupby('label'):
-        # cc = df.class_count.mean()
-        plt.plot(df.n_videos, df.accuracy, marker='o', label=c)#f'{c} {cc:.0f}'
+    for name, mdf in all_metrics[all_metrics.smoothing == 'ma'].groupby("run_name"):
+        plt.plot(mdf.win_size, mdf.f1, label=name)
     plt.legend()
-    plt.title('Accuracy vs. Number of Videos')
-    plt.xlabel('Number of Videos')
-    plt.ylabel('Accuracy')
+
+    plt.title('F1 Score vs. Number of Videos')
+    plt.xlabel('Moving Average Window Size')
+    plt.ylabel('F1 Score')
+    plt.tight_layout()
 
     plt.subplot(1, 2, 2)
-    for c, df in all_metrics.groupby('label'):
-        # cc = df.class_count.mean()
-        plt.plot(df.n_videos, df.accuracy, marker='o', label=c)#f'{c} {cc:.0f}'
-    plt.title('F1 Score vs. Number of Videos')
-    plt.xlabel('Number of Videos')
-    plt.ylabel('F1 Score')
+    for name, mdf in all_metrics[all_metrics.smoothing == 'ema'].groupby("run_name"):
+        plt.plot(mdf.alpha, mdf.f1, label=name)
     plt.legend()
+
+    plt.title('F1 Score vs. EMA alpha * x[t] + (1 - alpha) * x[t-1]')
+    plt.xlabel('Exp Moving Average alpha')
+    plt.ylabel('F1 Score')
     plt.tight_layout()
-    pltsave(f'{plot_dir}/{prefix}accuracy_f1_vs_videos_per_class.png')
+    pltsave(f'{plot_dir}/{prefix}accuracy_f1_vs_smooth.png')
+
+
+# def n_videos_class_metrics(plot_dir, all_metrics, prefix=''):
+#     # Plot accuracy and F1-score vs. the number of videos
+#     plt.figure(figsize=(12, 5))
+#     plt.subplot(1, 2, 1)
+#     for c, df in all_metrics.groupby('label'):
+#         # cc = df.class_count.mean()
+#         plt.plot(df.n_videos, df.accuracy, marker='o', label=c)#f'{c} {cc:.0f}'
+#     plt.legend()
+#     plt.title('Accuracy vs. Number of Videos')
+#     plt.xlabel('Number of Videos')
+#     plt.ylabel('Accuracy')
+
+#     plt.subplot(1, 2, 2)
+#     for c, df in all_metrics.groupby('label'):
+#         # cc = df.class_count.mean()
+#         plt.plot(df.n_videos, df.accuracy, marker='o', label=c)#f'{c} {cc:.0f}'
+#     plt.title('F1 Score vs. Number of Videos')
+#     plt.xlabel('Number of Videos')
+#     plt.ylabel('F1 Score')
+#     plt.legend()
+#     plt.tight_layout()
+#     pltsave(f'{plot_dir}/{prefix}accuracy_f1_vs_videos_per_class.png')
 
 
 def pltsave(fname):
@@ -398,43 +484,48 @@ def exponentially_decaying_average(a, decay_rate):
 # ---------------------------------------------------------------------------- #
 
 
-import ipdb
-@ipdb.iex
-def run(config_name):
-    cfg = get_cfg(config_name)
-    os.makedirs('plots', exist_ok=True)
 
-    # emb_dir = cfg.DATASET.EMBEDDING_DIR
-    emb_dir = os.path.join(cfg.DATASET.ROOT, 'embeddings-all', cfg.EVAL.DETECTION_NAME)
-    base_emb_dir = os.path.join(cfg.EVAL.TRAIN_BASE_ROOT, 'embeddings', cfg.EVAL.DETECTION_NAME)
-    emb_types = cfg.EVAL.EMBEDDING_TYPES
 
-    STATE = 'super_simple_state'
-    STATE = 'state'
+def get_data(cfg, STATE, full_split, emb_type='clip'):
+    emb_dirs = cfg.EVAL.EMBEDDING_DIRS or [os.path.join(cfg.DATASET.ROOT, 'embeddings-all', cfg.EVAL.DETECTION_NAME)]
+    ydf = load_data_from_db(cfg, state_col='mod_state')
+    db_train_split = ydf.video_id.unique().tolist()
+    ydf = pd.concat([
+        *[
+            load_data(cfg, f'{d}/{cfg.EVAL.DETECTION_NAME}/*/{emb_type}/*.npz', include=set(full_split) - set(ydf.video_id.unique()))
+            for d in emb_dirs
+        ],
+        ydf
+    ])
+    print(ydf.groupby('object').state.value_counts())
 
-    train_split = read_split_file(cfg.EVAL.TRAIN_CSV)
-    train_base_split = read_split_file(cfg.EVAL.TRAIN_BASE_CSV)
-    val_splits = [(f, read_split_file(f)) for f in cfg.EVAL.VAL_CSVS]
-    print(len(train_base_split), train_base_split[:5])
-    print(len(train_split), train_split[:5])
-    print(len(val_splits), val_splits[:5])
+    # sampling 12k per state
+    ydf = sample_random(ydf, STATE, 15000)
+    print(ydf.groupby('object').state.value_counts())
+    print('Nulls:', ydf[pd.isna(ydf.state)].video_id.value_counts())
+    assert None not in set(ydf.state)
+    return ydf, db_train_split
 
-    full_train_split = train_split + train_base_split
-    full_split = full_train_split + [x for f, xs in val_splits for x in xs]
-    print(full_split)
 
-    for _,val_split in val_splits:
-        assert not set(full_train_split) & set(val_split), f"what are you doing silly {set(full_train_split) & set(val_split)}"
+def sample_random(df, STATE, n):
+    df = df.groupby(STATE, group_keys=False).apply(lambda x: x.sample(min(len(x), n)))
+    return df
 
-    all_metrics = []
-    all_per_class_metrics = []
 
-    models = [
+def get_models(cfg):
+    return [
         # (KNeighborsClassifier, 'knn5',  {'n_neighbors': 5}),
-        (KNeighborsClassifier, 'knn11', {'n_neighbors': 11}),
+        # (KNeighborsClassifier, 'knn11-50', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 50)),
+        # (KNeighborsClassifier, 'knn11-100', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 100)),
+        (KNeighborsClassifier, 'knn5-2000', {'n_neighbors': 5}, lambda df: sample_random(df, STATE, 2000)),
+        (KNeighborsClassifier, 'knn21-2000', {'n_neighbors': 21}, lambda df: sample_random(df, STATE, 2000)),
+        (KNeighborsClassifier, 'knn11-1000', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 1000)),
+        (KNeighborsClassifier, 'knn11-2000', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 2000)),
+        (KNeighborsClassifier, 'knn11-5000', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 5000)),
+        (KNeighborsClassifier, 'knn11-12000', {'n_neighbors': 11}, lambda df: sample_random(df, STATE, 12000)),
         # (KNeighborsClassifier, 'knn50', {'n_neighbors': 50}),
-        (LogisticRegression, 'logreg',  {}),
-        (RandomForestClassifier, 'rf',  {}),
+        (LogisticRegression, 'logreg',  {}, lambda df: sample_random(df, STATE, 5000)),
+        (RandomForestClassifier, 'rf',  {}, lambda df: sample_random(df, STATE, 5000)),
         # (
         #     make_pipeline(
         #         StandardScaler(),
@@ -449,75 +540,98 @@ def run(config_name):
         # ),
     ]
 
-    # , 'detic', 'detic_s0', 'detic_s1', 'detic_s2'
-    emb_types=['clip']
-    for emb_type in tqdm.tqdm(emb_types, desc='embedding type'):
-        # data_file_pattern = f'{base_emb_dir}/*/{emb_type}/*.npz'
-        # ydf2 = load_data(cfg, data_file_pattern, include=full_split)
-        data_file_pattern = f'{emb_dir}/*/{emb_type}/*.npz'
-        ydf = load_data(cfg, data_file_pattern, include=full_split)
-        # ydf2 = load_data_from_db(cfg, state_col='super_simple_state')
-        # assert None not in set(ydf2.state)
-        # ydf = pd.concat([ydf1, ydf2])
-        print(ydf.groupby('object').state.value_counts())
-        ydf = ydf.groupby(STATE, group_keys=False).apply(lambda x: x.sample(min(len(x), 12000)))
-        print(ydf.groupby('object').state.value_counts())
-        assert None not in set(ydf.state)
-        emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['object'].values, 'object')
-        emb_plot(f'plots/{emb_type}', np.array(list(ydf['vector'].values)), ydf['state'].values, 'states')
+
+def prepare_data(odf, STATE, sampler, train_split, val_split):
+    video_ids = odf['video_id'].values
+    unique_video_ids = np.unique(video_ids)
+
+    # obj_train_base_split = [f for f in train_base_split if f in video_ids and f not in val_split]
+    obj_train_split = [f for f in train_split if f in video_ids and f not in val_split]
+    obj_val_split = [f for f in val_split if f in video_ids]
+    # embed()
+    # obj_train_split = sorted(obj_train_split, key=lambda v: -len(odf[odf.video_id == v].state.unique()))
+
+    # print("Base Training split:", obj_train_base_split)
+    print("Training split:", obj_train_split)
+    print("Validation split:", obj_val_split)
+    print("Unused videos:", set(unique_video_ids) - set(obj_train_split+obj_val_split))
+    print("Missing videos:", set(obj_train_split+obj_val_split) - set(unique_video_ids))
+
+    print()
+    print("all data:")
+    print('X', X.shape)
+    print('y', y.shape)
+    print(odf[['video_id', 'track_id', STATE]].value_counts())
+    i_train = np.isin(video_ids, obj_train_split)
+    # i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
+    i_val = np.isin(video_ids, obj_val_split)
+
+    if sampler is not None:
+        odf = pd.concat([sampler(odf.iloc[i_train]), odf.iloc[i_val]])
+    X = np.array(list(odf['vector'].values))
+    y = odf[STATE].values
+    return X, y, video_ids, i_train, i_val
+
+
+import ipdb
+@ipdb.iex
+def run(config_name):
+    cfg = get_cfg(config_name)
+    root_plot_dir = root_plot_dir_ = cfg.EVAL.PLOT_DIR or 'plots'
+    # i=0
+    # while os.path.isdir(root_plot_dir_):
+    #     root_plot_dir_ = root_plot_dir + f'_{i}'
+    #     i+=1
+    # root_plot_dir=root_plot_dir_
+    if os.path.isdir(root_plot_dir):
+        raise RuntimeError(f"{root_plot_dir} exists")
+    os.makedirs(root_plot_dir, exist_ok=True)
+
+    # STATE = 'super_simple_state'
+    # STATE = 'state'
+
+    train_split = read_split_file(cfg.EVAL.TRAIN_CSV)
+    train_base_split = read_split_file(cfg.EVAL.TRAIN_BASE_CSV)
+    val_splits = [(f, read_split_file(f)) for f in cfg.EVAL.VAL_CSVS]
+    print(len(train_base_split), train_base_split[:5])
+    print(len(train_split), train_split[:5])
+    print(len(val_splits), val_splits[:5])
+
+    full_train_split = train_split + train_base_split
+    full_val_split = [x for f, xs in val_splits for x in xs]
+    full_split = full_train_split + full_val_split
+    print(full_split)
+
+    for _,val_split in val_splits:
+        assert not set(full_train_split) & set(val_split), f"what are you doing silly {set(full_train_split) & set(val_split)}"
+
+
+    models = get_models(cfg)
+
+    cfg.EVAL.EMBEDDING_TYPES=['clip']
+    for emb_type in tqdm.tqdm(cfg.EVAL.EMBEDDING_TYPES, desc='embedding type'):
+        ydf, db_train_split = get_data(cfg, STATE, full_split)
+        emb_plot(f'{root_plot_dir}/{emb_type}', np.array(list(ydf['vector'].values)), ydf['object'].values, 'object')
+        # emb_plot(f'{root_plot_dir}/{emb_type}', np.array(list(ydf['vector'].values)), ydf[STATE].values, 'states')
 
         for (val_split_fname, val_split) in val_splits:
             val_split_name = val_split_fname.split('/')[-1].removesuffix('.txt')
             for object_name, odf in ydf.groupby('object'):
-                if object_name!='tortilla': continue
-                X = np.array(list(odf['vector'].values))
-                y = odf[STATE].values
-                video_ids = odf['video_id'].values
-                unique_video_ids = np.unique(video_ids)
-                emb_plot(f'plots/{emb_type}_{object_name}', X, y, 'states')
-
-                obj_train_base_split = [f for f in train_base_split if f in video_ids]
-                obj_train_split = [f for f in train_split if f in video_ids]
-                obj_val_split = [f for f in val_split if f in video_ids]
-                # obj_train_split = sorted(obj_train_split, key=lambda v: -len(odf[odf.video_id == v].state.unique()))
-
-                print("Base Training split:", obj_train_base_split)
-                print("Training split:", obj_train_split)
-                print("Validation split:", obj_val_split)
-                print("Unused videos:", set(unique_video_ids) - set(obj_train_base_split+obj_train_split+obj_val_split))
-                print("Missing videos:", set(obj_train_base_split+obj_train_split+obj_val_split) - set(unique_video_ids))
-
-                print()
-                print("all data:")
-                print('X', X.shape)
-                print('y', y.shape)
-                print(object_name)
-                print(X.shape)
-                print(odf[['video_id', 'track_id', STATE]].value_counts())
-
-                plot_dir = f'plots/{val_split_name}/{emb_type}/{object_name}'
+                plot_dir = f'{root_plot_dir}/{val_split_name}/{emb_type}/{object_name}'
                 os.makedirs(plot_dir, exist_ok=True)
-                # emb_plot(plot_dir, X, y, STATE)
-                # emb_plot(plot_dir, X, video_ids, 'video_id')
 
                 all_metrics = []
                 all_per_class_metrics = []
-                # range(len(obj_train_split))
-                for nvids in tqdm.tqdm([0, len(obj_train_split)], desc='n videos'):
-                    # nvids += 1
-                    i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
-                    i_val = np.isin(video_ids, obj_val_split)
-                    # embed()
 
-                    # a=odf.iloc[i_train][['video_id', STATE]].value_counts()
-                    # a.to_csv(f"{plot_dir}/train_stats_{nvids}vids.csv")
-                    # print(a)
-                    # a=odf.iloc[i_val][['video_id', STATE]].value_counts()
-                    # a.to_csv(f"{plot_dir}/val_stats_{nvids}vids.csv")
-                    # print(a)
-                    # x = np.unique(y[i_train])
+                for cls, name, kw, sampler in tqdm.tqdm(models, desc='models'):
+                    X, y, video_ids, i_train, i_val = prepare_data(odf, STATE, sampler, db_train_split, val_split)
+                    emb_plot(f'{root_plot_dir}/{emb_type}_{object_name}', X, y, 'states')
 
-                    print(f"Training with {nvids}: train size: {len(i_train)} val size: {len(i_val)}")
+                    if not i_val.sum():
+                        print(f"\n\n\n\nSKIPPING i_val is empty. {val_split}\n\n\n")
+                        continue
+
+                    print(f"Training with: train size: {len(i_train)} val size: {len(i_val)}")
 
                     print("Train Counts:")
                     train_counts = show_counts(y[i_train])
@@ -525,37 +639,30 @@ def run(config_name):
                     print("Val Counts:")
                     val_counts = show_counts(y[i_val])
                     print(val_counts)
+                
+                    model = cls(**kw)
+                    metrics, per_class_metrics = train_eval(
+                        f'{val_split_name}_{emb_type}_{name}', model, 
+                        X, y, i_train, i_val, 
+                        video_ids=video_ids,
+                        plot_dir=plot_dir,
+                        model_name=name,
+                        # n_videos=nvids,
+                        **kw)
+                    all_metrics.extend(metrics)
+                    all_per_class_metrics.extend(per_class_metrics)
 
+                all_metrics_df = pd.DataFrame(all_metrics)
+                all_per_class_metrics_df = pd.DataFrame(all_per_class_metrics)
 
-                    for cls, name, kw in tqdm.tqdm(models, desc='models'):
-                        model = cls(**kw)
-                        metrics, per_class_metrics = train_eval(
-                            f'{val_split_name}_{emb_type}_{name}_{nvids}vid', model, 
-                            X, y, i_train, i_val, 
-                            video_ids=video_ids,
-                            plot_dir=plot_dir,
-                            model_name=name,
-                            n_videos=nvids,
-                            **kw)
-                        all_metrics.extend(metrics)
-                        all_per_class_metrics.extend(per_class_metrics)
-                        # for d in per_class_metrics:
-                        #     d['class_count'] = train_counts[d['label']]
+                all_metrics_df.to_csv(f'{plot_dir}/metrics.csv')
+                all_per_class_metrics_df.to_csv(f'{plot_dir}/class_metrics.csv')
 
-            all_metrics_df = pd.DataFrame(all_metrics)
-            all_per_class_metrics_df = pd.DataFrame(all_per_class_metrics)
+                # ---------- Show how it performs as a function of number of videos ---------- #
 
-            all_metrics_df.to_csv(f'{plot_dir}/metrics.csv')
-            all_per_class_metrics_df.to_csv(f'{plot_dir}/class_metrics.csv')
-
-            # ---------- Show how it performs as a function of number of videos ---------- #
-
-            n_videos_metrics(plot_dir, all_metrics_df, f'{emb_type}_')
-            n_videos_class_metrics(plot_dir, all_per_class_metrics_df, f'{emb_type}_')
-
-            for n in all_metrics_df.model_name.unique():
-                n_videos_metrics(plot_dir, all_metrics_df[all_metrics_df.model_name == n], f'{n}_')
-                n_videos_class_metrics(plot_dir, all_per_class_metrics_df[all_per_class_metrics_df.model_name == n], f'{n}_')
+                if len(all_metrics):
+                    cross_model_metrics(plot_dir, all_metrics_df, f'{emb_type}_')
+                    # n_videos_class_metrics(plot_dir, all_per_class_metrics_df, f'{emb_type}_')
 
 
 def show_counts(y):

@@ -80,6 +80,7 @@ class ObjectDetector:
         xmem_config={}, 
         conf_threshold=0.3, 
         detect_hoi=None,
+        filter_tracked_detections_from_frame=True,
         device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None
     ):
         # initialize models
@@ -90,6 +91,7 @@ class ObjectDetector:
         self.clip_device = clip_device or device
         self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
         self.conf_threshold = conf_threshold
+        self.filter_tracked_detections_from_frame = filter_tracked_detections_from_frame
 
         self.egohos = None
         self.egohos_type = np.array(['', 'hand', 'hand', 'obj', 'obj', 'obj', 'obj', 'obj', 'obj', 'cb'])
@@ -190,6 +192,8 @@ class ObjectDetector:
                 ])
                 print(f'Objects: {self.obj_label_names}')
 
+    def clear_memory(self):
+        self.xmem.clear_memory()
 
     def predict_objects(self, image):
         # ----------------------------- Object Detection ----------------------------- #
@@ -202,6 +206,7 @@ class ObjectDetector:
         return instances, detic_query
     
     def _filter_detections(self, instances):
+        # drop any ignored instances
         instances = instances[~np.isin(instances.pred_labels, self.ignored_vocabulary)]
         # filter out objects completely inside another object
         obj_priority = torch.from_numpy(np.isin(instances.pred_labels, self.tracked_vocabulary)).int()
@@ -222,6 +227,8 @@ class ObjectDetector:
                 filtered_instances.pred_masks[i] |= torch.maximum(
                     filtered_instances.pred_masks[i], 
                     overlap_insts.pred_masks.max(0).values)
+            # filtered_instances.pred_masks
+        # log.info("filtered detections %s", len(filtered_instances))
         return filtered_instances
 
     def predict_hoi(self, image):
@@ -353,8 +360,8 @@ class ObjectDetector:
             track_ids=torch.as_tensor(track_ids),
         )
 
-        frame_detections = None
-        if detections is not None:
+        frame_detections = detections
+        if detections is not None and self.filter_tracked_detections_from_frame:
             frame_detections = detections[~np.isin(detections.pred_labels, self.tracked_vocabulary)]
         return instances, frame_detections
 
@@ -388,7 +395,7 @@ class ObjectDetector:
                         self.dino_state_classes[label_mask].tolist(),
                         y[label_mask].tolist()
                     ))
-                    print(state)
+                    # print(state)
 
             states.append(state)
         # detections.__dict__['pred_states'] = states
@@ -452,8 +459,12 @@ class Perception:
     def __init__(self, *a, detect_every_n_seconds=0.5, max_width=480, **kw):
         self.detector = ObjectDetector(*a, **kw)
         self.detect_every_n_seconds = 0 if detect_every_n_seconds is True else detect_every_n_seconds
-        self.detection_timestamp = -detect_every_n_seconds
+        self.detection_timestamp = -1e30
         self.max_width = max_width
+
+    def clear_memory(self):
+        self.detector.clear_memory()
+        self.detection_timestamp = -1e30
 
     @torch.no_grad()
     def predict(self, image, timestamp):
@@ -470,7 +481,7 @@ class Perception:
         # ---------------------------------------------------------------------------- #
 
         detections = detic_query = hoi_detections = hand_mask = None
-        is_detection_frame = (timestamp - self.detection_timestamp) >= self.detect_every_n_seconds
+        is_detection_frame = abs(timestamp - self.detection_timestamp) >= self.detect_every_n_seconds
         if is_detection_frame:
             self.detection_timestamp = timestamp
 
