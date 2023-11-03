@@ -12,8 +12,9 @@ VOCAB = {
     ],
     'untracked': [
         "microwave_oven",
-        "package",
-        "tortilla plastic_bag packet ice_pack circular: tortilla_package",
+        # "tortilla plastic_bag packet ice_pack circular: tortilla_package",
+        'tortilla_package',
+        "paper_towel",
         'banana',
         "banana mushroom: banana_slice",
         'chopping_board clipboard place_mat tray: cutting_board',

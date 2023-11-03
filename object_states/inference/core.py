@@ -2,7 +2,7 @@
 # from ray import serve
 # from ray.serve.handle import DeploymentHandle
 import logging
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 import pickle
 
 import cv2
@@ -39,9 +39,11 @@ class CustomTrack(XMem.Track):
     hoi_class_id = 0
     state_class_label = ''
     confidence = 0
-    def __init__(self, track_id, t_obs, n_init=3, **kw):
+    def __init__(self, track_id, t_obs, n_init=3, state_history_len=4, hand_obj_history_len=4, **kw):
         super().__init__(track_id, t_obs, n_init, **kw)
         self.label_count = Counter()
+        self.obj_state_history = deque(maxlen=state_history_len)
+        self.hoi_history = deque(maxlen=hand_obj_history_len)
         self.obj_state_dist = pd.Series(dtype=float)
         self.obj_state_dist_label = None
         self.z_clips = {}
@@ -270,25 +272,45 @@ class ObjectDetector:
         # ---------------------- Predict class for unlabeled HOI --------------------- #
 
         # get hoi objects with poor overlap
-        hoi_is_its_own_obj = iou.sum(0) < 0.3
-        # get labels for HOIs
-        hoi_outputs = detic_query.predict(
-            hoi_obj_boxes[hoi_is_its_own_obj].to(self.detic_device), 
-            self.skill_clsf, labels=self.skill_labels)
+        hoi_iou = iou.sum(0)
+        hoi_is_its_own_obj = hoi_iou < 0.2
 
-        hoi_detections2 = hoi_outputs['instances']
-        pm = hoi_obj_detections.pred_masks[hoi_is_its_own_obj]
-        # if len(hoi_detections2) != len(pm):
-        #     print(len(hoi_detections2))
-        #     print(hoi_is_its_own_obj)
-        #     print(pm.shape)
-        hoi_detections2.pred_masks = pm
-        hoi_is_its_own_obj = hoi_is_its_own_obj.cpu()
-        hoi_detections2.left_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'left')[hoi_is_its_own_obj]
-        hoi_detections2.right_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'right')[hoi_is_its_own_obj]
-        hoi_detections2.both_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'both')[hoi_is_its_own_obj]
-        # TODO: add top K classes and scores
-        return hoi_detections2
+        bbox = hoi_obj_boxes[hoi_is_its_own_obj].to(self.detic_device)
+        masks = hoi_obj_masks[hoi_is_its_own_obj]
+        scores = torch.Tensor(1 - hoi_iou[hoi_is_its_own_obj])
+        labels = np.array(['unknown' for i in range(len(bbox))])
+        try:
+            instances = Instances(
+                hoi_obj_detections.image_size,
+                scores=scores,
+                pred_boxes=Boxes(bbox),
+                pred_masks=masks,
+                pred_labels=labels,
+            )
+        except AssertionError:
+            print('failed creating unknown instances:\n', bbox.shape, masks.shape, scores.shape, labels.shape, '\n')
+            instances = None
+        return instances
+
+        # # get labels for HOIs
+        # hoi_outputs = detic_query.predict(
+        #     hoi_obj_boxes[hoi_is_its_own_obj].to(self.detic_device), 
+        #     self.skill_clsf, labels=self.skill_labels)
+
+        # hoi_detections2 = hoi_outputs['instances']
+        # hoi_detections2.pred_labels[:] = 'unknown'
+        # pm = hoi_obj_detections.pred_masks[hoi_is_its_own_obj]
+        # # if len(hoi_detections2) != len(pm):
+        # #     print(len(hoi_detections2))
+        # #     print(hoi_is_its_own_obj)
+        # #     print(pm.shape)
+        # hoi_detections2.pred_masks = pm
+        # hoi_is_its_own_obj = hoi_is_its_own_obj.cpu()
+        # hoi_detections2.left_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'left')[hoi_is_its_own_obj]
+        # hoi_detections2.right_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'right')[hoi_is_its_own_obj]
+        # hoi_detections2.both_hand_interaction = torch.as_tensor(hoi_obj_hand_side == 'both')[hoi_is_its_own_obj]
+        # # TODO: add top K classes and scores
+        # return hoi_detections2
 
     def filter_objects(self, detections):
         return detections, detections
@@ -500,6 +522,8 @@ class Perception:
 
 
     def serialize_detections(self, detections, frame_shape, include_mask=False):
+        if detections is None:
+            return None
         bboxes = detections.pred_boxes.tensor.cpu().numpy()
         bboxes[:, 0] /= frame_shape[1]
         bboxes[:, 1] /= frame_shape[0]
