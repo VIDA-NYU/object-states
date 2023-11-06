@@ -7,6 +7,7 @@ DATA:
   VOCAB: 
     - mug cup: mug
     - mug
+    - coffee_dripper pour_over_coffee mug: dripper
     # - cup vase teacup bowl: dripper
     # - cup mug chocolate_mousse cupcake
     - bowl

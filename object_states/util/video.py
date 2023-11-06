@@ -190,7 +190,7 @@ def crop_box_with_size(frame, bbox, target_size, padding=0):
         max(x - padding, 0):min(x2 + padding, W)]
     
     # Resize the cropped region to the desired size
-    resized_cropped_region = cv2.resize(cropped_region, target_size)
+    resized_cropped_region = cv2.resize(cropped_region, target_size) if cropped_region.size else cropped_region
 
     return resized_cropped_region
 

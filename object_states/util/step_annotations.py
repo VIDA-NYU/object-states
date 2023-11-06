@@ -57,18 +57,28 @@ def add_object_annotations(view, objects_dfs, state_fields=['state'], detections
 
 
 
-def load_object_annotations(cfg):
-    return load_object_annotations_from_csvs(cfg.DATASET.META_CSV, cfg.DATASET.STATES_CSV)
+DROP_KEYS = ['oatmeal+raisins+cinnamon', 'oatmeal+raisins+cinnamon+honey']
 
-def load_object_annotations_from_csvs(meta_csv, states_csv):
-    meta_df = pd.read_csv(meta_csv).set_index('video_name').groupby(level=0).first()
+
+def load_object_annotations(cfg, **kw):
+    return load_object_annotations_from_csvs(cfg.DATASET.META_CSV, cfg.DATASET.STATES_CSV, **kw)
+
+def load_object_annotations_from_csvs(meta_csv, states_csv, overwrite=False):
+    meta_df = get_sheet(ANN_SHEET, 0, '/datasets/PTG Object State Labels - Metadata.csv', overwrite)
+    meta_df = meta_df.dropna(axis=0, subset=['video_name']).groupby('video_name').last()
+
+    states_df = get_sheet(ANN_SHEET, 787650247, '/datasets/PTG Object State Labels - State Annotations.csv', overwrite)
+    states_df = states_df.dropna(subset=['video_name'])
+    states_df = states_df[~states_df.mug.isin(DROP_KEYS)]
+
+    # meta_df = pd.read_csv(meta_csv).set_index('video_name').groupby(level=0).first()
     object_names = []
     for c in meta_df.columns:
         if c.startswith('#'):
-            meta_df[c[1:]] = meta_df.pop(c).fillna('').apply(lambda s: [int(float(x)) for x in str(s).split('+') if x != ''])
+            meta_df[c[1:]] = meta_df.pop(c).fillna('').apply(lambda s: [int(float(x)) for x in str(s).strip().split('+') if x != ''])
             object_names.append(c[1:])
 
-    states_df = pd.read_csv(states_csv)
+    # states_df = pd.read_csv(states_csv)
     states_df['video_name'] = states_df['video_name'].ffill()
     states_df = states_df[states_df.time.fillna('') != '']
     states_df['time'] = pd.to_timedelta(states_df.time.apply(lambda x: f'00:{x}'))
@@ -90,10 +100,12 @@ def load_object_annotations_from_csvs(meta_csv, states_csv):
                 continue
             for track_id in row[c]:
                 objs[track_id] = odf
+
         # if not len(objs):
         #     continue
         dfs[vid] = objs
-            
+    # from IPython import embed
+    # embed()
     return dfs
 
 def get_obj_ann(df, i, state_key='state'):
@@ -108,3 +120,15 @@ def get_obj_anns(df, frame_idx):
     return pd.DataFrame(idxs)
 
 
+
+ANN_SHEET = '13m-DY5QwCHaVrhkkX7EgKJuNTYgXcTaYidFObbmkXKA'
+def get_sheet(id, gid=0, cache=None, overwrite=False):
+    if cache:
+        if not overwrite and os.path.isfile(cache):
+            print("Using cache", cache)
+            return pd.read_csv(cache)
+        print("Querying", cache)
+    
+    df = pd.read_csv(f'https://docs.google.com/spreadsheets/d/{id}/export?format=csv&gid={gid}')
+    df.to_csv(cache)
+    return df

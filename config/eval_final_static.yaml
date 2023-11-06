@@ -3,13 +3,13 @@ DATASET:
   ROOT: /datasets/annotation_final
   EVAL_ROOT: /datasets/annotation_final_eval
   VIDEO_PATTERN: /datasets/Bridget_videos/*.mp4
-  STATES_CSV: /datasets/PTG Object State Labels - Step Annotations.csv
+  STATES_CSV: /datasets/PTG Object State Labels - State Annotations.csv
   # STATES_CSV: /datasets/PTG Object State Labels - Simple Step Annotations.csv
   # STATES_CSV: /datasets/PTG Object State Labels - Super Simple Step Annotations.csv
   META_CSV: /datasets/PTG Object State Labels - Metadata.csv
 
 EVAL:
-  PLOT_DIR: plots-15-all-models-full-db-full-aug
+  PLOT_DIR: plots-15-ahhhhcoffeewhereareu
   USE_AUGMENTATIONS: True
   EMBEDDING_DIRS:
   #  - /datasets/annotation_final/embeddings-all

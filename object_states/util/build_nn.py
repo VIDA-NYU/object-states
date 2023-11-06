@@ -6,51 +6,52 @@ import numpy as np
 import pandas as pd
 import lancedb
 import matplotlib.pyplot as plt
+from .step_annotations import load_object_annotations_from_csvs, get_obj_ann
 
 from IPython import embed
 
 from ..config import get_cfg
 
 
-def load_object_annotations(meta_csv, states_csv):
-    meta_df = pd.read_csv(meta_csv).set_index('video_name').groupby(level=0).last()
-    object_names = []
-    for c in meta_df.columns:
-        if c.startswith('#'):
-            meta_df[c[1:]] = meta_df.pop(c).fillna('').apply(lambda s: [int(float(x)) for x in str(s).split('+') if x != ''])
-            object_names.append(c[1:])
+# def load_object_annotations(meta_csv, states_csv):
+#     meta_df = pd.read_csv(meta_csv).set_index('video_name').groupby(level=0).last()
+#     object_names = []
+#     for c in meta_df.columns:
+#         if c.startswith('#'):
+#             meta_df[c[1:]] = meta_df.pop(c).fillna('').apply(lambda s: [int(float(x)) for x in str(s).split('+') if x != ''])
+#             object_names.append(c[1:])
 
-    states_df = pd.read_csv(states_csv)
-    states_df = states_df[states_df.time.fillna('') != '']
-    # print(states_df.shape)
-    print(set(states_df.video_name.unique()) - set(meta_df.index.unique()))
-    states_df = states_df[states_df.video_name.isin(meta_df.index.unique())]
-    states_df['time'] = pd.to_timedelta(states_df.time.apply(lambda x: f'00:{x}'))
-    states_df['start_frame'] = (states_df.time.dt.total_seconds() * meta_df.fps.loc[states_df.video_name].values).astype(int)
-    # print(states_df.shape) 
+#     states_df = pd.read_csv(states_csv)
+#     states_df = states_df[states_df.time.fillna('') != '']
+#     # print(states_df.shape)
+#     print(set(states_df.video_name.unique()) - set(meta_df.index.unique()))
+#     states_df = states_df[states_df.video_name.isin(meta_df.index.unique())]
+#     states_df['time'] = pd.to_timedelta(states_df.time.apply(lambda x: f'00:{x}'))
+#     states_df['start_frame'] = (states_df.time.dt.total_seconds() * meta_df.fps.loc[states_df.video_name].values).astype(int)
+#     # print(states_df.shape) 
     
-    # creating a dict of {video_id: {track_id: df}}
-    dfs = {}
-    for vid, row in meta_df.iterrows():
-        objs = {}
-        sdf = states_df[states_df.video_name == vid]
-        for c in object_names:
-            if c not in sdf.columns:
-                continue
-            odf = sdf[[c, 'start_frame']].copy().rename(columns={c: "state"})
-            odf = odf[odf.state.fillna('') != '']
-            odf = odf.drop_duplicates(subset=['start_frame'], keep='last')
-            odf['stop_frame'] = odf['start_frame'].shift(-1)
-            odf['object'] = c
-            if not len(odf):
-                continue
-            track_id=None
-            for track_id in row[c]:
-                objs[track_id] = odf
-            print(vid, track_id, odf.shape)
-        dfs[vid] = objs
+#     # creating a dict of {video_id: {track_id: df}}
+#     dfs = {}
+#     for vid, row in meta_df.iterrows():
+#         objs = {}
+#         sdf = states_df[states_df.video_name == vid]
+#         for c in object_names:
+#             if c not in sdf.columns:
+#                 continue
+#             odf = sdf[[c, 'start_frame']].copy().rename(columns={c: "state"})
+#             odf = odf[odf.state.fillna('') != '']
+#             odf = odf.drop_duplicates(subset=['start_frame'], keep='last')
+#             odf['stop_frame'] = odf['start_frame'].shift(-1)
+#             odf['object'] = c
+#             if not len(odf):
+#                 continue
+#             track_id=None
+#             for track_id in row[c]:
+#                 objs[track_id] = odf
+#             print(vid, track_id, odf.shape)
+#         dfs[vid] = objs
             
-    return dfs
+#     return dfs
 
 
 def get_obj_anns(dfs, frame_idx):
@@ -79,7 +80,7 @@ def load_data(cfg, data_file_pattern, use_aug=True, data_slice=None):
     embeddings_list, df_list = [], []
 
     dfs = {
-        k: load_object_annotations(cfg.DATASET.META_CSV, f)
+        k: load_object_annotations_from_csvs(cfg.DATASET.META_CSV, f)
         for k, f in cfg.DATASET.STATES_CSVS.items()
     }
     # embed()

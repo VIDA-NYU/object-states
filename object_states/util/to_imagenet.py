@@ -49,12 +49,12 @@ def warn_once(*a, **kw):
 
 def extract_frames(
     output_dir, *dataset_dirs, state_col='state', val_dataset_dirs=None, 
-    train_keywords=None, val_keywords=None, fps_skip=10, 
-    overwrite=False, always_iter_video=False,
+    train_keywords=None, val_keywords=None, fps_skip=5, 
+    overwrite=False, overwrite_meta=False, always_iter_video=False,
     cfg='config/eval_dino_imagenet.yaml'
 ):
     cfg = get_cfg(cfg)
-    dfs = load_object_annotations(cfg)
+    dfs = load_object_annotations(cfg, overwrite=overwrite_meta)
 
     output_dir = os.path.join(output_dir, state_col)
 
@@ -63,6 +63,7 @@ def extract_frames(
     dataset_dirs = list(dataset_dirs or [])
     val_dataset_dirs = list(val_dataset_dirs or [])
 
+    # if input():embed()
     for dataset_dir in dataset_dirs + val_dataset_dirs:
         manifest = load(manifest_fname(dataset_dir))
         pbar = tqdm.tqdm(sorted(manifest['index'], key=lambda d: d['labels']))
@@ -74,6 +75,9 @@ def extract_frames(
                 split = 'train' if any(k in label_fname for k in train_keywords) else 'val'
             else:
                 split = 'val' if any(k in label_fname for k in val_keywords) else 'train'
+            # if split == 'val':
+            #     print(label_fname)
+            #     input()
 
             pbar.set_description(name)
             ddf = dfs.get(name)
@@ -123,22 +127,34 @@ def extract_frames(
 
                     # get object state and label
                     label, state = get_obj_ann(odf, i, state_col)
+                    pbar.set_description(f'{label} {state}')
 
                     # check if file already exists
                     fname = f'{output_dir}/{split}/{label}__{state}/{name}__{i}__{idx}.JPEG' # extension imagenet expects
                     if os.path.isfile(fname) and not overwrite:
                         continue
+                    otherlabelfs = glob.glob(f'{output_dir}/{split}/{label}__*/{name}__{i}__{idx}.JPEG')
+                    if otherlabelfs:
+                        log.warning(f"{red('renaming')} %s to %s", otherlabelfs[0].split('/')[-2], fname.split('/')[-2])
+                        os.makedirs(os.path.dirname(fname), exist_ok=True)
+                        os.rename(otherlabelfs[0], fname)
 
                     warn_once(f"{green('extracting')} track state %s %s", name, idx)
                     pbar.set_description(f'{split} {label} {state} - {os.path.basename(fname)}')
 
                     # get cropped image
                     try:
-                        xyxy = box_to_xyxy(o['bounding_box'], frame.shape[:2][::-1])
+                        xyxy = box_to_xyxy(o['bounding_box'], frame.shape)
+                        if xyxy[0] == xyxy[2] or xyxy[1] == xyxy[3]:
+                            log.warning(f"{red('empty box')} %s %s", label, xyxy)
+                            continue
                         crop = crop_box_with_size(frame, xyxy, (224, 224), padding=15)
+                        if not crop.size:
+                            continue
                     except Exception as e:
                         log.exception(e)
                         continue
+                    
                     im = Image.fromarray(crop[:,:,::-1])
 
                     # write to file

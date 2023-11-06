@@ -28,7 +28,7 @@ device = "cuda"
 import ipdb
 @ipdb.iex
 @torch.no_grad()
-def main(config_fname, debug=False):
+def main(config_fname, match=None, embeddings_dir='embeddings', debug=False):
     cfg = get_cfg(config_fname)
 
     dataset_dir = cfg.DATASET.ROOT
@@ -58,10 +58,12 @@ def main(config_fname, debug=False):
     manifest = eta.load(tree.manifest)
     for sample in tqdm.tqdm(manifest['index']):
         video_fname = sample['data']
+        if match and match not in video_fname:
+            continue
         label_fname = sample['labels']
         video_name = os.path.basename(video_fname)
 
-        out_dir = cfg.DATASET.EMBEDDING_DIR or os.path.join(dataset_dir, 'embeddings', field)
+        out_dir = cfg.DATASET.EMBEDDING_DIR or os.path.join(dataset_dir, embeddings_dir, field)
         os.makedirs(out_dir, exist_ok=True)
         video_out_dir = os.path.join(out_dir, video_name)
         if os.path.isdir(video_out_dir):

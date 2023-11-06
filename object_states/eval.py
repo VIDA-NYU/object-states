@@ -99,8 +99,8 @@ def load_data(cfg, data_file_pattern, include=None):
 
     print(f"Found {len(fs)} files", fs[:1])
     for f in tqdm.tqdm(fs, desc='loading data...'):
-        if 'coffee_mit-eval' in f:
-            embed()
+        # if 'coffee_mit-eval' in f:
+        #     embed()
         if include and not any(fi in f for fi in include):
             print("Skipping", f)
             continue
@@ -149,7 +149,7 @@ def load_data(cfg, data_file_pattern, include=None):
         # print(df_list[-1][['object', 'state']].value_counts())
         # print()
         # if input(): embed()
-
+    if input():embed()
     X = np.concatenate(embeddings_list)
     df = pd.concat(df_list)
     df['vector'] = list(X)
@@ -557,19 +557,30 @@ def prepare_data(odf, STATE, sampler, train_split, val_split):
     print("Unused videos:", set(unique_video_ids) - set(obj_train_split+obj_val_split))
     print("Missing videos:", set(obj_train_split+obj_val_split) - set(unique_video_ids))
 
+    i_train = np.isin(video_ids, obj_train_split)
+    # i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
+    i_val = np.isin(video_ids, obj_val_split)
+
+    odfo=odf
+    if sampler is not None:
+        odf_train = sampler(odf.iloc[i_train])
+        odf_val = odf.iloc[i_val]
+        i_train = np.arange(len(odf_train))
+        i_val = np.arange(len(odf_val)) + i_train.max()+1
+
+        odf = pd.concat([odf_train, odf_val])
+
+    video_ids = odf['video_id'].values
+    i_train = np.isin(video_ids, obj_train_split)
+    i_val = np.isin(video_ids, obj_val_split)
+    X = np.array(list(odf['vector'].values))
+    y = odf[STATE].values
     print()
     print("all data:")
     print('X', X.shape)
     print('y', y.shape)
     print(odf[['video_id', 'track_id', STATE]].value_counts())
-    i_train = np.isin(video_ids, obj_train_split)
-    # i_train = np.isin(video_ids, obj_train_base_split + obj_train_split[:nvids])
-    i_val = np.isin(video_ids, obj_val_split)
-
-    if sampler is not None:
-        odf = pd.concat([sampler(odf.iloc[i_train]), odf.iloc[i_val]])
-    X = np.array(list(odf['vector'].values))
-    y = odf[STATE].values
+    # embed()
     return X, y, video_ids, i_train, i_val
 
 
