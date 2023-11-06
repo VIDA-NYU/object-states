@@ -80,6 +80,9 @@ class ObjectDetector:
         xmem_config={}, 
         conf_threshold=0.3, 
         detect_hoi=None,
+        state_key='state',
+        detic_config_key=None,
+        additional_roi_heads=None,
         filter_tracked_detections_from_frame=True,
         device='cuda', detic_device=None, egohos_device=None, xmem_device=None, clip_device=None
     ):
@@ -89,7 +92,15 @@ class ObjectDetector:
         self.egohos_device = egohos_device or device
         self.xmem_device = xmem_device or device
         self.clip_device = clip_device or device
-        self.detic = Detic([], masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
+        self.detic = Detic([], config=detic_config_key, masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
+        if not isinstance(additional_roi_heads, list):
+            additional_roi_heads = [additional_roi_heads]
+        self.additional_roi_heads = (
+            (torch.load(h) if isinstance(h, str) else h).to(self.detic_device)
+            for h in additional_roi_heads or []
+        )
+        external_vocab = [l for h in self.additional_roi_heads for l in h.labels]
+
         self.conf_threshold = conf_threshold
         self.filter_tracked_detections_from_frame = filter_tracked_detections_from_frame
 
@@ -143,6 +154,9 @@ class ObjectDetector:
         full_vocab = list(tracked_vocab) + list(untracked_vocab) + base_vocab
         full_prompts = list(tracked_prompts) + list(untracked_prompts) + base_prompts
 
+        if external_vocab:
+            full_vocab, full_prompts = list(zip(*[(v, p) for v, p in zip(full_vocab, full_prompts) if v not in external_vocab])) or [[],[]]
+
         self.tracked_vocabulary = np.asarray(list(set(tracked_vocab)))
         self.ignored_vocabulary = np.asarray(['IGNORE'])
 
@@ -153,7 +167,7 @@ class ObjectDetector:
 
 
         self.state_clsf_type = None
-        self.state_db_key = 'super_simple_state'
+        self.state_db_key = state_key
         self.obj_label_names = []
         if state_db_fname:
             if state_db_fname.endswith(".lancedb"):
@@ -202,6 +216,12 @@ class ObjectDetector:
         detic_query = self.detic.build_query(image)
         outputs = detic_query.detect(self.skill_clsf, conf_threshold=0.3, labels=self.skill_labels)
         instances = outputs['instances']
+        instances_list = [
+            detic_query.detect(roi_heads=h)
+            for h in self.additional_roi_heads
+        ]
+        if instances_list:
+            instances = Instances.cat([instances] + instances_list)
         instances = self._filter_detections(instances)
         return instances, detic_query
     

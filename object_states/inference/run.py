@@ -26,7 +26,7 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
     # print(out_path)
 
     name = os.path.splitext(os.path.basename(src))[0]
-    treeA = pt.tree(dataset_dir, {
+    treeA = pt.tree(dataset_dir or f'output/{name}', {
         'labels': {'{name}.json': 'labels'},
         'labels2': {'{name}.json': 'labels2'},
         'output_json': {'{name}_{stream_name}.json': 'output_json'},
@@ -34,8 +34,8 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
         # 'manifest.json': 'manifest',
     }, data={'name': name})
     output_json_files = {
-        'track': (treeA.output_json.format(stream_name='detic-fast'), []),
-        'frame': (treeA.output_json.format(stream_name='detic-image'), []),
+        'track': (treeA.output_json.format(stream_name='detic-image'), []),
+        'frame': (treeA.output_json.format(stream_name='detic-image-misc'), []),
     }
     # embed()
 
@@ -55,7 +55,7 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
         det_frame = hoi_frame = np.zeros((WH[1], WH[0], 3), dtype=np.uint8)
 
         with XMemSink(str(treeA.tracks), video_info) as s:
-            pbar = tqdm.tqdm(sv.get_video_frames_generator(src))
+            pbar = tqdm.tqdm(sv.get_video_frames_generator(src), total=video_info.total_frames)
             for i, frame in enumerate(pbar):
                 frame = cv2.resize(frame, WH)
                 timestamp = i / video_info.fps
@@ -118,6 +118,7 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
                 # write out frame predictions
                 frame_data = []
                 if frame_detections is not None:
+                    frame_data += track_data
                     frame_data += model.serialize_detections(frame_detections, frame.shape)
                 if hoi_detections is not None:
                     frame_data += model.serialize_detections(hoi_detections, frame.shape)
@@ -138,7 +139,7 @@ def detectron_to_sv(outputs, classes=None):
     detections = sv.Detections(
         xyxy=outputs.pred_boxes.tensor.numpy(),
         mask=outputs.pred_masks.numpy() if outputs.has('pred_masks') else None,
-        class_id=outputs.pred_classes.int().numpy() if outputs.has('pred_classes') else None,
+        class_id=outputs.pred_classes.int().numpy() if outputs.has('pred_classes') else np.zeros(len(outputs), dtype=int),
         tracker_id=outputs.track_ids.int().numpy() if outputs.has('track_ids') else None,
         confidence=outputs.scores.numpy() if outputs.has('scores') else None,
     )
@@ -153,13 +154,16 @@ def detectron_to_sv(outputs, classes=None):
 
 import ipdb
 @ipdb.iex
-def run(*srcs, tracked_vocab=None, state_db=None, vocab=VOCAB, detect_every=0.5, conf_threshold=0.3, **kw):
+def run(*srcs, tracked_vocab=None, state_db=None, vocab=VOCAB, additional_roi_heads=None, detic_config_key=None, detect_every=0.5, conf_threshold=0.3, **kw):
     if tracked_vocab is not None:
         vocab['tracked'] = tracked_vocab
 
     model = Perception(
         vocabulary=vocab,
         state_db_fname=state_db,
+        state_key='mod_state',
+        additional_roi_heads=additional_roi_heads,
+        detic_config_key=detic_config_key,
         detect_every_n_seconds=detect_every,
         conf_threshold=conf_threshold,
         filter_tracked_detections_from_frame=False,

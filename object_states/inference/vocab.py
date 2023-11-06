@@ -33,6 +33,13 @@ VOCAB = {
         'toothpicks',
         # 'floss',
         'watch', 'glove', 'person',
+
+        'measuring_cup',
+        'thermometer',
+        'kettle',
+        'kitchen_scale electronic_weight_scale: scale',
+        'coffee_grinder',
+        'paper_filter',
     ],
     'equivalencies': {
         # equivalencies
