@@ -70,6 +70,35 @@ class CustomTrack(XMem.Track):
         return self.obj_state_dist
 
 
+import itertools
+def cat_instances(instance_lists):
+    assert all(isinstance(i, Instances) for i in instance_lists)
+    assert len(instance_lists) > 0
+    if len(instance_lists) == 1:
+        return instance_lists[0]
+
+    image_size = instance_lists[0].image_size
+    if not isinstance(image_size, torch.Tensor):  # could be a tensor in tracing
+        for i in instance_lists[1:]:
+            assert i.image_size == image_size
+    ret = Instances(image_size)
+    for k in instance_lists[0]._fields.keys():
+        values = [i.get(k) for i in instance_lists]
+        v0 = values[0]
+        if isinstance(v0, torch.Tensor):
+            values = torch.cat(values, dim=0)
+        elif isinstance(v0, list):
+            values = list(itertools.chain(*values))
+        elif hasattr(type(v0), "cat"):
+            values = type(v0).cat(values)
+        elif isinstance(v0, np.ndarray):
+            values = np.concatenate(values, axis=0)
+        else:
+            raise ValueError("Unsupported type {} for concatenation".format(type(v0)))
+        ret.set(k, values)
+    return ret
+
+
 # IGNORE_CLASSES = ['table', 'dining_table', 'table-tennis_table', 'person']
 
 class ObjectDetector:
@@ -93,13 +122,6 @@ class ObjectDetector:
         self.xmem_device = xmem_device or device
         self.clip_device = clip_device or device
         self.detic = Detic([], config=detic_config_key, masks=True, one_class_per_proposal=3, conf_threshold=conf_threshold, device=self.detic_device).eval().to(self.detic_device)
-        if not isinstance(additional_roi_heads, list):
-            additional_roi_heads = [additional_roi_heads]
-        self.additional_roi_heads = (
-            (torch.load(h) if isinstance(h, str) else h).to(self.detic_device)
-            for h in additional_roi_heads or []
-        )
-        external_vocab = [l for h in self.additional_roi_heads for l in h.labels]
 
         self.conf_threshold = conf_threshold
         self.filter_tracked_detections_from_frame = filter_tracked_detections_from_frame
@@ -154,8 +176,23 @@ class ObjectDetector:
         full_vocab = list(tracked_vocab) + list(untracked_vocab) + base_vocab
         full_prompts = list(tracked_prompts) + list(untracked_prompts) + base_prompts
 
-        if external_vocab:
-            full_vocab, full_prompts = list(zip(*[(v, p) for v, p in zip(full_vocab, full_prompts) if v not in external_vocab])) or [[],[]]
+        # if external_vocab:
+        #     full_vocab, full_prompts = list(zip(*[(v, p) for v, p in zip(full_vocab, full_prompts) if v not in external_vocab])) or [[],[]]
+        
+        if not isinstance(additional_roi_heads, list):
+            additional_roi_heads = [additional_roi_heads]
+        self.additional_roi_heads = [
+            (torch.load(h) if isinstance(h, str) else h).to(self.detic_device)
+            for h in additional_roi_heads or []
+        ]
+        for h in self.additional_roi_heads:
+            h.one_class_per_proposal = self.detic.predictor.model.roi_heads.one_class_per_proposal
+            # for p in h.box_predictor:
+                # p.test_topk_per_image = self.detic.predictor.model.roi_heads.box_predictor[0].test_topk_per_image
+        self.additional_roi_heads_labels = [h.labels for h in self.additional_roi_heads]
+        labels_covered_by_roi_heads = [l for ls in self.additional_roi_heads_labels for l in ls]
+        self.base_labels = [l for l in full_vocab if l not in labels_covered_by_roi_heads]
+
 
         self.tracked_vocabulary = np.asarray(list(set(tracked_vocab)))
         self.ignored_vocabulary = np.asarray(['IGNORE'])
@@ -216,14 +253,45 @@ class ObjectDetector:
         detic_query = self.detic.build_query(image)
         outputs = detic_query.detect(self.skill_clsf, conf_threshold=0.3, labels=self.skill_labels)
         instances = outputs['instances']
-        instances_list = [
-            detic_query.detect(roi_heads=h)
-            for h in self.additional_roi_heads
-        ]
-        if instances_list:
-            instances = Instances.cat([instances] + instances_list)
+        if self.additional_roi_heads:
+            instances = instances[np.isin(instances.pred_labels, self.base_labels)]
+            instances_list = [
+                detic_query.detect(self.skill_clsf, roi_heads=h, labels=self.skill_labels)['instances']
+                for h in self.additional_roi_heads
+            ]
+            instances_list = [
+                h[np.isin(h.pred_labels, ls)]
+                for h, ls in zip(instances_list, self.additional_roi_heads_labels)
+            ]
+            instances = self._cat_instances(instances, instances_list)
         instances = self._filter_detections(instances)
         return instances, detic_query
+    
+    def _cat_instances(self, instances, instances_list):
+        if instances_list:
+            instances = [instances] + instances_list
+            # score_len = max(x.topk_scores.shape[1] for x in instances)
+            # print(score_len)
+            # class_offset = 0
+            # for x in instances:
+            #     try:
+            #         x.remove('topk_scores')
+            #         x.remove('topk_classes')
+            #         x.remove('topk_labels')
+            #     except KeyError:
+            #         pass
+            #     s = x.pred_scores
+            #     x.pred_scores = torch.cat([torch.zeros((len(s), class_offset), device=s.device, dtype=s.dtype), s], dim=1)
+            #     class_offset += s.shape[1]
+
+                # s = x.topk_scores
+                # if s.shape[1] < score_len:
+                #     print(s.shape)
+                #     x2 = torch.zeros((len(x), score_len), device=s.device, dtype=s.dtype)
+                #     x2[:, :len(s)] = s
+                #     x.topk_scores = x2
+            instances = cat_instances(instances)
+        return instances
     
     def _filter_detections(self, instances):
         # drop any ignored instances
