@@ -57,6 +57,8 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
         with XMemSink(str(treeA.tracks), video_info) as s:
             pbar = tqdm.tqdm(sv.get_video_frames_generator(src), total=video_info.total_frames)
             for i, frame in enumerate(pbar):
+                if i % 10: continue
+                if i < 600: continue
                 frame = cv2.resize(frame, WH)
                 timestamp = i / video_info.fps
 
@@ -109,7 +111,7 @@ def run_one(model, src, size=480, dataset_dir=None, overwrite=False, **kw):
 
                 # ----------------------------- Serialize outputs ---------------------------- #
 
-                meta = { 'timestamp': timestamp, 'image_shape': frame.shape }
+                meta = { 'timestamp': timestamp, 'image_shape': list(frame.shape) }
 
                 # write out track predictions
                 track_data = model.serialize_detections(track_detections, frame.shape)
@@ -154,7 +156,10 @@ def detectron_to_sv(outputs, classes=None):
 
 import ipdb
 @ipdb.iex
-def run(*srcs, tracked_vocab=None, state_db=None, vocab=VOCAB, additional_roi_heads=None, detic_config_key=None, detect_every=0.5, conf_threshold=0.3, **kw):
+def run(*srcs, 
+        tracked_vocab=None, state_db=None, vocab=VOCAB, additional_roi_heads=None, detic_config_key=None, detect_every=0.5, conf_threshold=0.3, 
+        custom_state_clsf_fname=None,
+        **kw):
     if tracked_vocab is not None:
         vocab['tracked'] = tracked_vocab
 
@@ -162,6 +167,7 @@ def run(*srcs, tracked_vocab=None, state_db=None, vocab=VOCAB, additional_roi_he
         vocabulary=vocab,
         state_db_fname=state_db,
         state_key='mod_state',
+        custom_state_clsf_fname=custom_state_clsf_fname,
         additional_roi_heads=additional_roi_heads,
         detic_config_key=detic_config_key,
         detect_every_n_seconds=detect_every,

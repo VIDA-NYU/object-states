@@ -5,6 +5,8 @@ import logging
 from collections import Counter, defaultdict, deque
 import pickle
 
+import os
+import glob
 import cv2
 import numpy as np
 import pandas as pd
@@ -106,6 +108,7 @@ class ObjectDetector:
         self, 
         vocabulary, 
         state_db_fname=None, 
+        custom_state_clsf_fname=None,
         xmem_config={}, 
         conf_threshold=0.3, 
         detect_hoi=None,
@@ -206,6 +209,7 @@ class ObjectDetector:
         self.state_clsf_type = None
         self.state_db_key = state_key
         self.obj_label_names = []
+        self.sklearn_state_clsfs = {}
         if state_db_fname:
             if state_db_fname.endswith(".lancedb"):
                 self.state_clsf_type = 'lancedb'
@@ -225,23 +229,35 @@ class ObjectDetector:
                 # for name in self.obj_label_names:
                 #     tbl.create_index(num_partitions=256, num_sub_vectors=96)
 
-            if state_db_fname.endswith('.pkl'):
-                self.state_clsf_type = 'dino'
-                self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').eval().to(self.clip_device)
-                self.dino_head, self.dino_classes = pickle.load(open(state_db_fname, 'rb'))
+        if custom_state_clsf_fname:
+            import joblib
+            for f in glob.glob(os.path.join(custom_state_clsf_fname, '*.joblib')):
+                cname = os.path.splitext(os.path.basename(f))[0]
+                c = joblib.load(f)
+                c.labels = np.array([l.strip() for l in open(os.path.join(custom_state_clsf_fname, f'{cname}.txt')).readlines() if l.strip()])
+                self.sklearn_state_clsfs[cname] = c
+        # print(self.sklearn_state_clsfs)
+        # input()
+        # embed()
 
-                dino_object_classes = np.array([x.split('__')[0] for x in self.dino_classes])
-                self.dino_state_classes = np.array([x.split('__')[1] for x in self.dino_classes])
-                self.obj_label_names = np.unique(dino_object_classes)
-                self.dino_label_mask = {l: dino_object_classes == l for l in self.obj_label_names}
 
-                self.dino_pre = transforms.Compose([
-                    transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
-                    transforms.CenterCrop(224),
-                    transforms.ToTensor(),
-                    transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
-                ])
-                print(f'Objects: {self.obj_label_names}')
+            # if state_db_fname.endswith('.pkl'):
+            #     self.state_clsf_type = 'dino'
+            #     self.dinov2 = torch.hub.load('facebookresearch/dinov2', 'dinov2_vits14_reg').eval().to(self.clip_device)
+            #     self.dino_head, self.dino_classes = pickle.load(open(state_db_fname, 'rb'))
+
+            #     dino_object_classes = np.array([x.split('__')[0] for x in self.dino_classes])
+            #     self.dino_state_classes = np.array([x.split('__')[1] for x in self.dino_classes])
+            #     self.obj_label_names = np.unique(dino_object_classes)
+            #     self.dino_label_mask = {l: dino_object_classes == l for l in self.obj_label_names}
+
+            #     self.dino_pre = transforms.Compose([
+            #         transforms.Resize(224, interpolation=transforms.InterpolationMode.BICUBIC),
+            #         transforms.CenterCrop(224),
+            #         transforms.ToTensor(),
+            #         transforms.Normalize(mean=IMAGENET_DEFAULT_MEAN, std=IMAGENET_DEFAULT_STD),
+            #     ])
+            #     print(f'Objects: {self.obj_label_names}')
 
     def clear_memory(self):
         self.xmem.clear_memory()
@@ -467,7 +483,18 @@ class ObjectDetector:
             state = {}
 
             if has_state[i]:
-                if self.state_clsf_type == 'lancedb':
+                if pred_label in self.sklearn_state_clsfs:
+                    z = Z_imgs[i_z[i]].cpu().numpy()
+                    c = self.sklearn_state_clsfs[pred_label]
+                    y = c.predict_proba(z[None])[0]
+                    state = {
+                        c: x for c, x in zip(c.labels.tolist(), y.tolist())
+                    }
+                    # print(pred_label)
+                    # print(sorted(state.items(), key=lambda x: x[1])[-3:])
+                    # input()
+
+                elif self.state_clsf_type == 'lancedb':
                     z = Z_imgs[i_z[i]].cpu().numpy()
                     df = self.obj_state_tables[pred_label].search(z).limit(11).to_df()
                     state = df[self.state_db_key].value_counts()
@@ -475,15 +502,15 @@ class ObjectDetector:
                     if track_ids is not None and track_ids[i] in self.xmem.tracks:
                         state = self.xmem.tracks[track_ids[i]].update_state(state, pred_label, self.state_ema)
                     state = state.to_dict()
-                elif self.state_clsf_type == 'dino':
-                    y = Z_imgs[i_z[i]]#.cpu().numpy()
-                    assert y.shape[-1] == self.dino_state_classes.shape[0]
-                    label_mask = self.dino_label_mask[pred_label]
-                    state = dict(zip(
-                        self.dino_state_classes[label_mask].tolist(),
-                        y[label_mask].tolist()
-                    ))
-                    # print(state)
+                # elif self.state_clsf_type == 'dino':
+                #     y = Z_imgs[i_z[i]]#.cpu().numpy()
+                #     assert y.shape[-1] == self.dino_state_classes.shape[0]
+                #     label_mask = self.dino_label_mask[pred_label]
+                #     state = dict(zip(
+                #         self.dino_state_classes[label_mask].tolist(),
+                #         y[label_mask].tolist()
+                #     ))
+                #     # print(state)
 
             states.append(state)
         # detections.__dict__['pred_states'] = states
@@ -508,18 +535,21 @@ class ObjectDetector:
             sy = hi / hd
         crops = [
             Image.fromarray(img[
-                int(y * sy):max(int(np.ceil(y2 * sy)), int(y * sy + 2)),
-                int(x * sx):max(int(np.ceil(x2 * sx)), int(x * sx + 2)),
+                max(int(y * sy - 15), 0):max(int(np.ceil(y2 * sy + 15)), int(y * sy + 2)),
+                max(int(x * sx - 15), 0):max(int(np.ceil(x2 * sx + 15)), int(x * sx + 2)),
                 ::-1])
             for x, y, x2, y2 in boxes.cpu()
         ]
+        # for c in crops:
+        #     c.save('demo.png')
+        #     input()
 
         if self.state_clsf_type == 'lancedb':
             Z = self.clip.encode_image(torch.stack([self.clip_pre(x) for x in crops]).to(self.clip_device))
-            Z /= Z.norm(dim=1, keepdim=True)
-        elif self.state_clsf_type == 'dino':
-            Z = self.dinov2(torch.stack([self.dino_pre(x) for x in crops]).to(self.clip_device))
-            Z = self.dino_head.predict_proba(np.ascontiguousarray(Z.cpu().numpy()))
+            # Z /= Z.norm(dim=1, keepdim=True)
+        # elif self.state_clsf_type == 'dino':
+        #     Z = self.dinov2(torch.stack([self.dino_pre(x) for x in crops]).to(self.clip_device))
+        #     Z = self.dino_head.predict_proba(np.ascontiguousarray(Z.cpu().numpy()))
         return Z
     
     def classify(self, Z, labels):
@@ -658,7 +688,7 @@ class Perception:
         output = []
         for i in range(len(detections)):
             data = {
-                'xyxyn': bboxes[i],
+                'xyxyn': bboxes[i].tolist(),
                 'label': labels[i],
             }
 
