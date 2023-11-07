@@ -179,7 +179,7 @@ class ObjectDetector:
         # if external_vocab:
         #     full_vocab, full_prompts = list(zip(*[(v, p) for v, p in zip(full_vocab, full_prompts) if v not in external_vocab])) or [[],[]]
         
-        if not isinstance(additional_roi_heads, list):
+        if additional_roi_heads is not None and not isinstance(additional_roi_heads, list):
             additional_roi_heads = [additional_roi_heads]
         self.additional_roi_heads = [
             (torch.load(h) if isinstance(h, str) else h).to(self.detic_device)
