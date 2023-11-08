@@ -233,9 +233,11 @@ class ObjectDetector:
             import joblib
             for f in glob.glob(os.path.join(custom_state_clsf_fname, '*.joblib')):
                 cname = os.path.splitext(os.path.basename(f))[0]
+                print('using sklearn model:', cname, f)
                 c = joblib.load(f)
                 c.labels = np.array([l.strip() for l in open(os.path.join(custom_state_clsf_fname, f'{cname}.txt')).readlines() if l.strip()])
                 self.sklearn_state_clsfs[cname] = c
+                print(c)
         # print(self.sklearn_state_clsfs)
         # input()
         # embed()
